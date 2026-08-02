@@ -1345,7 +1345,13 @@ TravelNodeRoute TravelNodeMap::getRoute(WorldPosition startPos, WorldPosition en
         WorldPosition startNodePosition = *startNode->getPosition();
         WorldPosition endNodePosition = *endNode->getPosition();
 
-        float maxStartDistance = startNode->isTransport() ? 20.0f : sPlayerbotAIConfig.targetPosRecalcDistance;
+        // How close the generated path has to land to count as reaching the start node.
+        // targetPosRecalcDistance is a movement-precision threshold (0.1 yards by default,
+        // "has the move target drifted enough to replan"), not an arrival tolerance. Using it
+        // here demands the navmesh path end within 10cm of the node, which mesh pathing
+        // essentially never does, so every candidate node was rejected and every route came
+        // back empty.
+        float maxStartDistance = startNode->isTransport() ? 20.0f : 10.0f;
 
         TravelNodeRoute route = getRoute(startNode, endNode, bot);
 

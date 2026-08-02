@@ -356,6 +356,13 @@ bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint3
         for (POIInfo const& poi : poiInfo)
         {
             uint32 poiZone = GetPositionZoneId(poi.pos);
+
+            // A zone id of 0 means the lookup failed for that position, not that it sits in
+            // another zone. Treating it as cross-zone sends the bot migrating towards a zone
+            // that does not exist, which can never resolve to a hub or a route.
+            if (!poiZone)
+                continue;
+
             if (poi.pos.GetMapId() == bot->GetMapId() && poiZone == currentZone)
                 continue;
 
@@ -404,15 +411,27 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
             break;
     }
 
+    std::size_t hubCandidates = candidates.size();
+    bool directAttempted = false;
+    bool directRouted = false;
     if (candidates.empty() && breadcrumb && requestedDestination)
     {
+        directAttempted = true;
         ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, requestedDestination);
         if (!route.steps.empty())
         {
+            directRouted = true;
             TravelMgr::LevelBracket bracket{bot->GetLevel(), bot->GetLevel()};
             candidates.push_back({{requestedDestination, requestedZone, bracket}, std::move(route)});
         }
     }
+
+    if (candidates.empty())
+        LOG_WARN("playerbots",
+                 "[New RPG] {} StartZoneTravel gave up: breadcrumb {}, hubsAfterFilter {}, hubRoutes {}, "
+                 "directAttempted {}, directRouted {}, requestedZone {}",
+                 bot->GetName(), breadcrumb, hubs.size(), hubCandidates, directAttempted, directRouted,
+                 requestedZone);
 
     if (candidates.empty())
         return false;

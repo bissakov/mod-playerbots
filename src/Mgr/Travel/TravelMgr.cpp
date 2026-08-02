@@ -4358,6 +4358,16 @@ void TravelMgr::Init()
         PrepareDestinationCache();
     }
     sTravelNodeMap.InitTaxiGraph();
+
+    // The node graph that backs every cross-zone route lives in the playerbots
+    // database, and nothing else loads it: LoadQuestTravelTable() is the only
+    // caller of loadNodeStore() and is itself never called. Leaving it unloaded
+    // makes TravelNodeMap::getRoute() return empty on its first line, which
+    // silently disables all zone travel rather than failing loudly.
+    sTravelNodeMap.loadNodeStore();
+    sTravelNodeMap.generateAll();
+    LOG_INFO("playerbots", "Playerbots travel node graph ready with {} nodes.", sTravelNodeMap.getNodes().size());
+
     LOG_INFO("playerbots", "Playerbots Taxi graph and destination cache built.");
 }
 

@@ -94,8 +94,15 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
 
                 info.migrationCooldownStartedAt = getMSTime();
                 botAI->rpgStatistic.zoneRouteFailures++;
-                LOG_WARN("playerbots", "[New RPG] {} cannot find a legitimate route for breadcrumb quest {}",
-                         bot->GetName(), breadcrumbQuest);
+                LOG_WARN("playerbots",
+                         "[New RPG] {} cannot find a legitimate route for breadcrumb quest {} "
+                         "(lvl {}, fromZone {}, toZone {}, map {}->{}, dist {:.0f})",
+                         bot->GetName(), breadcrumbQuest, bot->GetLevel(), bot->GetZoneId(),
+                         GetPositionZoneId(breadcrumbDestination), bot->GetMapId(),
+                         breadcrumbDestination.GetMapId(),
+                         bot->GetMapId() == breadcrumbDestination.GetMapId()
+                             ? bot->GetExactDist(breadcrumbDestination)
+                             : -1.0f);
             }
             else
             {
