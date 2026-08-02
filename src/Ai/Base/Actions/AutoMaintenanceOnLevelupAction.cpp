@@ -82,7 +82,13 @@ void AutoMaintenanceOnLevelupAction::LearnTrainerSpells(std::ostringstream* /*ou
     PlayerbotFactory factory(bot, bot->GetLevel());
     factory.InitSkills();
     factory.InitClassSpells();
-    factory.InitAvailableSpells();
+
+    // InitClassSpells only grants the hardcoded baseline (Attack, Defensive Stance, Taunt, ...) a bot needs to
+    // function, so it stays. InitAvailableSpells hands out every trainer spell in the world for free, which is
+    // exactly what organic progression asks the bot to earn from a trainer instead.
+    if (!sPlayerbotAIConfig.organicProgression)
+        factory.InitAvailableSpells();
+
     factory.InitPet();
 }
 
@@ -175,6 +181,8 @@ void AutoMaintenanceOnLevelupAction::AutoUpgradeEquip()
     factory.InitConsumables();
     factory.InitPotions();
 
-    if (sPlayerbotAIConfig.autoUpgradeEquip)
+    // Only gear is withheld under organic progression - the consumable init above is left alone on purpose,
+    // starving bots are a separate problem.
+    if (sPlayerbotAIConfig.autoUpgradeEquip && !sPlayerbotAIConfig.organicProgression)
         factory.InitEquipment(true);
 }

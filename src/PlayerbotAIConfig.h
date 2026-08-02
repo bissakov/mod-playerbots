@@ -375,6 +375,7 @@ public:
     bool allowLearnTrainerSpells;
     bool autoPickTalents;
     bool autoUpgradeEquip;
+    bool organicProgression;
     int32 hunterWolfPet;
     int32 defaultPetStance;
     int32 petChatCommandDebug;

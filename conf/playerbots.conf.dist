@@ -1004,6 +1004,16 @@ AiPlayerbot.AutoLearnTrainerSpells = 1
 # Default: 1 (enabled)
 AiPlayerbot.AutoPickTalents = 1
 
+# Randombots earn their power instead of being handed it on levelup. When enabled:
+#   - trainer spells are no longer granted for free on levelup (AiPlayerbot.AutoLearnTrainerSpells);
+#     the hardcoded baseline class spells a bot needs to function are still granted
+#   - equipment is no longer materialized on levelup (AiPlayerbot.AutoUpgradeEquip)
+#   - the AiPlayerbot.RandomBotSpellIds list is no longer granted
+# Consumables, mounts and AiPlayerbot.AutoEquipUpgradeLoot (equipping upgrades the bot actually looted)
+# are unaffected.
+# Default: 0 (disabled)
+AiPlayerbot.OrganicProgression = 0
+
 # Spells every randombot will learn automatically and every altbot will learn with maintenance
 # Default: 54197 (Cold Weather Flying)
 AiPlayerbot.RandomBotSpellIds = "54197"

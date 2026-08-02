@@ -3355,11 +3355,16 @@ void PlayerbotFactory::InitClassSpells()
 
 void PlayerbotFactory::InitSpecialSpells()
 {
-    for (std::vector<uint32>::iterator i = sPlayerbotAIConfig.randomBotSpellIds.begin();
-         i != sPlayerbotAIConfig.randomBotSpellIds.end(); ++i)
+    // The configured spells are granted with no level or cost check at all - the default list holds Cold Weather
+    // Flying (level 77, 1000g), which is how level-4 bots end up knowing it. Organic progression makes them earn it.
+    if (!sPlayerbotAIConfig.organicProgression)
     {
-        uint32 spellId = *i;
-        bot->learnSpell(spellId);
+        for (std::vector<uint32>::iterator i = sPlayerbotAIConfig.randomBotSpellIds.begin();
+             i != sPlayerbotAIConfig.randomBotSpellIds.end(); ++i)
+        {
+            uint32 spellId = *i;
+            bot->learnSpell(spellId);
+        }
     }
     // to leave DK starting area
     if (bot->getClass() == CLASS_DEATH_KNIGHT)
