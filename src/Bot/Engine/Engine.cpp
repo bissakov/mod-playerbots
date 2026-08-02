@@ -439,7 +439,7 @@ Strategy* Engine::GetStrategy(std::string const name)
 
 void Engine::ProcessTriggers(bool minimal)
 {
-    std::unordered_map<Trigger*, Event> fires;
+    std::unordered_map<Trigger*, Event> evaluations;
     uint32 now = getMSTime();
     for (std::vector<TriggerNode*>::iterator i = triggers.begin(); i != triggers.end(); i++)
     {
@@ -457,7 +457,7 @@ void Engine::ProcessTriggers(bool minimal)
         if (!trigger)
             continue;
 
-        if (fires.find(trigger) != fires.end())
+        if (evaluations.find(trigger) != evaluations.end())
             continue;
 
         if (testMode || trigger->needCheck(now))
@@ -471,10 +471,10 @@ void Engine::ProcessTriggers(bool minimal)
             if (pmo)
                 pmo->finish();
 
+            evaluations.emplace(trigger, event);
             if (!event)
                 continue;
 
-            fires[trigger] = event;
             LogAction("T:%s", trigger->getName().c_str());
         }
     }
@@ -483,11 +483,11 @@ void Engine::ProcessTriggers(bool minimal)
     {
         TriggerNode* node = *i;
         Trigger* trigger = node->getTrigger();
-        if (fires.find(trigger) == fires.end())
+        auto const evaluation = evaluations.find(trigger);
+        if (evaluation == evaluations.end() || !evaluation->second)
             continue;
 
-        Event event = fires[trigger];
-        MultiplyAndPush(node->getHandlers(), 0.0f, false, event, "trigger");
+        MultiplyAndPush(node->getHandlers(), 0.0f, false, evaluation->second, "trigger");
     }
 
     for (std::vector<TriggerNode*>::iterator i = triggers.begin(); i != triggers.end(); i++)

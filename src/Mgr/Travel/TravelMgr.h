@@ -847,6 +847,20 @@ protected:
 class TravelMgr
 {
 public:
+    struct LevelBracket
+    {
+        uint32 low;
+        uint32 high;
+        bool InsideBracket(uint32 val) const { return val >= low && val <= high; }
+    };
+
+    struct ZoneHub
+    {
+        WorldPosition position;
+        uint32 zoneId;
+        LevelBracket bracket;
+    };
+
     struct NpcLocation
     {
         WorldLocation loc;
@@ -879,6 +893,8 @@ public:
     std::vector<std::vector<uint32>> GetOptimalFlightDestinations(Player* bot);
     const std::vector<WorldLocation> GetTeleportLocations(Player* bot);
     const std::vector<WorldLocation> GetTravelHubs(Player* bot);
+    std::vector<ZoneHub> GetFactionCompatibleLevelHubs(Player const* bot) const;
+    bool GetZoneLevelBracket(uint32 zoneId, LevelBracket& bracket) const;
     std::vector<WorldLocation> GetCityLocations(Player* bot);
     std::vector<uint32> GetFlightNodesInZone(uint32 zoneId, TeamId team, uint32 excludeNode = 0) const;
     bool SelectAuctioneerByMap(Player* bot, NpcLocation& outAuctioneer);
@@ -977,14 +993,6 @@ private:
     // Navigation initialization
     void PrepareZone2LevelBracket();
     void PrepareDestinationCache();
-
-    // Internal types
-    struct LevelBracket
-    {
-        uint32 low;
-        uint32 high;
-        bool InsideBracket(uint32 val) const { return val >= low && val <= high; }
-    };
 
     struct BankerLocation
     {

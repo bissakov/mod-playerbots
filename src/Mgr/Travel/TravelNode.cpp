@@ -1415,7 +1415,7 @@ TravelPath TravelNodeMap::getFullPath(WorldPosition startPos, WorldPosition endP
     //[[Node pathfinding system]]
     // We try to find nodes near the bot and near the end position that have a route between them.
     // Then bot has to move towards/along the route.
-    TravelNodeMap::instance().m_nMapMtx.lock_shared();
+    std::shared_lock routeLock(TravelNodeMap::instance().m_nMapMtx);
 
     // Find the route of nodes starting at a node closest to the start position and ending at a node closest to the
     // endposition. Also returns longPath: The path from the start position to the first node in the route.
@@ -1426,7 +1426,7 @@ TravelPath TravelNodeMap::getFullPath(WorldPosition startPos, WorldPosition endP
 
     if (sPlayerbotAIConfig.hasLog("bot_pathfinding.csv"))
     {
-        if (botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
+        if (botAI && botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
         {
             sPlayerbotAIConfig.openLog("bot_pathfinding.csv", "w");
             sPlayerbotAIConfig.log("bot_pathfinding.csv", route.print().str().c_str());
@@ -1438,14 +1438,12 @@ TravelPath TravelNodeMap::getFullPath(WorldPosition startPos, WorldPosition endP
 
     if (sPlayerbotAIConfig.hasLog("bot_pathfinding.csv"))
     {
-        if (botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
+        if (botAI && botAI->HasStrategy("debug move", BOT_STATE_NON_COMBAT))
         {
             sPlayerbotAIConfig.openLog("bot_pathfinding.csv", "w");
             sPlayerbotAIConfig.log("bot_pathfinding.csv", movePath.print().str().c_str());
         }
     }
-
-    TravelNodeMap::instance().m_nMapMtx.unlock_shared();
 
     return movePath;
 }

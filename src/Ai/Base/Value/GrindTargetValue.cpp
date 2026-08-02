@@ -12,6 +12,41 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 
+Unit* GrindTargetValue::Get()
+{
+    uint32 const now = getMSTime();
+    uint32 const cacheInterval = std::max(sPlayerbotAIConfig.reactDelay, uint32(1));
+    if (targetCacheInitialized && getMSTimeDiff(lastTargetCheckTime, now) < cacheInterval)
+    {
+        if (!cachedTargetGuid)
+            return nullptr;
+
+        Unit* cachedTarget = botAI->GetUnit(cachedTargetGuid);
+        if (cachedTarget && cachedTarget->IsAlive() && cachedTarget->IsInWorld() &&
+            !cachedTarget->IsDuringRemoveFromWorld())
+            return cachedTarget;
+    }
+
+    PerfMonitorOperation* pmo = sPerfMonitor.start(
+        PERF_MON_VALUE, getName(), context ? &context->performanceStack : nullptr);
+    Unit* target = Calculate();
+    if (pmo)
+        pmo->finish();
+
+    cachedTargetGuid = target ? target->GetGUID() : ObjectGuid::Empty;
+    lastTargetCheckTime = now;
+    targetCacheInitialized = true;
+    return target;
+}
+
+void GrindTargetValue::Reset()
+{
+    TargetValue::Reset();
+    cachedTargetGuid.Clear();
+    lastTargetCheckTime = 0;
+    targetCacheInitialized = false;
+}
+
 Unit* GrindTargetValue::Calculate()
 {
     uint32 memberCount = 1;

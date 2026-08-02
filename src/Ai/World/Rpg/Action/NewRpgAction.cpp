@@ -25,11 +25,13 @@
 #include "PathGenerator.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "PlayerbotAIConfig.h"
 #include "QuestDef.h"
 #include "Random.h"
 #include "SharedDefines.h"
 #include "Timer.h"
 #include "TravelMgr.h"
+#include "ZoneTravelPolicy.h"
 
 bool TellRpgStatusAction::Execute(Event event)
 {
@@ -65,6 +67,56 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
 {
     NewRpgInfo& info = botAI->rpgInfo;
     NewRpgStatus status = info.GetStatus();
+
+    bool progressChecked = false;
+    bool madeProgress = CheckProgress(progressChecked);
+    if (madeProgress && status == RPG_TRAVEL_ZONE)
+    {
+        LOG_INFO("playerbots", "[New RPG] {} cancelled zone travel after renewed XP or quest progress",
+                 bot->GetName());
+        info.ChangeToIdle();
+        return true;
+    }
+
+    if (sPlayerbotAIConfig.zoneProgressionEnabled && progressChecked && status != RPG_TRAVEL_ZONE)
+    {
+        bool inRetryCooldown = info.migrationCooldownStartedAt &&
+                               GetMSTimeDiffToNow(info.migrationCooldownStartedAt) <
+                                   sPlayerbotAIConfig.zoneProgressionRetryCooldown * IN_MILLISECONDS;
+        if (!inRetryCooldown)
+        {
+            WorldPosition breadcrumbDestination;
+            uint32 breadcrumbQuest = 0;
+            if (FindCrossZoneBreadcrumb(breadcrumbDestination, breadcrumbQuest))
+            {
+                if (StartZoneTravel(breadcrumbDestination, breadcrumbQuest, true))
+                    return true;
+
+                info.migrationCooldownStartedAt = getMSTime();
+                botAI->rpgStatistic.zoneRouteFailures++;
+                LOG_WARN("playerbots", "[New RPG] {} cannot find a legitimate route for breadcrumb quest {}",
+                         bot->GetName(), breadcrumbQuest);
+            }
+            else
+            {
+                uint32 stableJitter = (bot->GetGUID().GetCounter() % 301) * IN_MILLISECONDS;
+                uint32 timeout = sPlayerbotAIConfig.zoneProgressionNoProgressTimeout * IN_MILLISECONDS + stableJitter;
+                if (info.lastProgressAt && GetMSTimeDiffToNow(info.lastProgressAt) >= timeout)
+                {
+                    if (StartZoneTravel())
+                        return true;
+
+                    info.migrationCooldownStartedAt = getMSTime();
+                    botAI->rpgStatistic.zoneRouteFailures++;
+                    LOG_WARN("playerbots",
+                             "[New RPG] {} found no legitimate faction-safe route after {} seconds without progress",
+                             bot->GetName(), timeout / IN_MILLISECONDS);
+                }
+            }
+        }
+    }
+
+    status = info.GetStatus();
     switch (status)
     {
         case RPG_IDLE:
@@ -156,6 +208,28 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
             }
             break;
         }
+        case RPG_TRAVEL_ZONE:
+        {
+            auto& data = std::get<NewRpgInfo::TravelZone>(info.data);
+            if (bot->GetZoneId() == data.destinationZoneId && bot->GetExactDist(data.destination) < 80.0f)
+            {
+                uint32 resumeQuestId = data.resumeQuestId;
+                info.lastProgressAt = getMSTime();
+                botAI->rpgStatistic.zoneArrivals++;
+                LOG_INFO("playerbots", "[New RPG] {} arrived in zone {}", bot->GetName(), data.destinationZoneId);
+                if (resumeQuestId)
+                {
+                    if (Quest const* quest = sObjectMgr->GetQuestTemplate(resumeQuestId))
+                        info.ChangeToDoQuest(resumeQuestId, quest);
+                    else
+                        info.ChangeToIdle();
+                }
+                else
+                    info.ChangeToIdle();
+                return true;
+            }
+            break;
+        }
         default:
             break;
     }
@@ -168,7 +242,7 @@ bool NewRpgGoGrindAction::Execute(Event /*event*/)
         return true;
     if (auto* data = std::get_if<NewRpgInfo::GoGrind>(&botAI->rpgInfo.data))
     {
-        if (MoveFarTo(data->pos))
+        if (MoveFarTo(data->pos) != MoveFarOutcome::RouteFailed)
             return true;
         // Small nudge so the next tick's MoveFarTo starts from a
         // slightly different position. Kept small so it doesn't look
@@ -186,7 +260,7 @@ bool NewRpgGoCampAction::Execute(Event /*event*/)
 
     if (auto* data = std::get_if<NewRpgInfo::GoCamp>(&botAI->rpgInfo.data))
     {
-        if (MoveFarTo(data->pos))
+        if (MoveFarTo(data->pos) != MoveFarOutcome::RouteFailed)
             return true;
         return MoveRandomNear(10.0f);
     }
@@ -319,27 +393,23 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
             return true;
         }
         uint32 rndIdx = urand(0, poiInfo.size() - 1);
-        G3D::Vector2 nearestPoi = poiInfo[rndIdx].pos;
         int32 objectiveIdx = poiInfo[rndIdx].objectiveIdx;
-
-        float dx = nearestPoi.x, dy = nearestPoi.y;
-
-        // z = MAX_HEIGHT as we do not know accurate z
-        float dz = std::max(bot->GetMap()->GetHeight(dx, dy, MAX_HEIGHT), bot->GetMap()->GetWaterLevel(dx, dy));
-
-        // double check for GetQuestPOIPosAndObjectiveIdx
-        if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
-            return false;
-
-        WorldPosition pos(bot->GetMapId(), dx, dy, dz);
         data.lastReachPOI = 0;
-        data.pos = pos;
+        data.pos = poiInfo[rndIdx].pos;
         data.objectiveIdx = objectiveIdx;
+
+        if (data.pos.GetMapId() != bot->GetMapId() || GetPositionZoneId(data.pos) != bot->GetZoneId())
+        {
+            if (StartZoneTravel(data.pos, questId, true))
+                return true;
+            botAI->rpgInfo.ChangeToIdle();
+            return true;
+        }
     }
 
     if (bot->GetDistance(data.pos) > 10.0f && !data.lastReachPOI)
     {
-        if (MoveFarTo(data.pos))
+        if (MoveFarTo(data.pos) != MoveFarOutcome::RouteFailed)
             return true;
         // Long-range sampler couldn't land a candidate — nudge the
         // bot a short distance so the next tick retries from a
@@ -416,19 +486,17 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
             return false;
         }
         assert(poiInfo.size() > 0);
-        // now we get the place to get rewarded
-        float dx = poiInfo[0].pos.x, dy = poiInfo[0].pos.y;
-        // z = MAX_HEIGHT as we do not know accurate z
-        float dz = std::max(bot->GetMap()->GetHeight(dx, dy, MAX_HEIGHT), bot->GetMap()->GetWaterLevel(dx, dy));
-
-        // double check for GetQuestPOIPosAndObjectiveIdx
-        if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
-            return false;
-
-        WorldPosition pos(bot->GetMapId(), dx, dy, dz);
         data.lastReachPOI = 0;
-        data.pos = pos;
+        data.pos = poiInfo[0].pos;
         data.objectiveIdx = -1;
+
+        if (data.pos.GetMapId() != bot->GetMapId() || GetPositionZoneId(data.pos) != bot->GetZoneId())
+        {
+            if (StartZoneTravel(data.pos, questId, true))
+                return true;
+            botAI->rpgInfo.ChangeToIdle();
+            return true;
+        }
     }
 
     if (data.pos == WorldPosition())
@@ -436,7 +504,7 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
 
     if (bot->GetDistance(data.pos) > 10.0f && !data.lastReachPOI)
     {
-        if (MoveFarTo(data.pos))
+        if (MoveFarTo(data.pos) != MoveFarOutcome::RouteFailed)
             return true;
         return MoveRandomNear(10.0f);
     }
@@ -477,7 +545,7 @@ bool NewRpgTravelFlightAction::Execute(Event /*event*/)
     }
 
     if (bot->GetDistance(data.flightMasterPos) > INTERACTION_DISTANCE)
-        return MoveFarTo(data.flightMasterPos);
+        return MoveFarTo(data.flightMasterPos) != MoveFarOutcome::RouteFailed;
 
     Creature* flightMaster = bot->FindNearestCreature(data.flightMasterEntry, INTERACTION_DISTANCE * 3);
     if (!flightMaster || !flightMaster->IsAlive())
@@ -486,7 +554,7 @@ bool NewRpgTravelFlightAction::Execute(Event /*event*/)
         return true;
     }
     if (bot->GetDistance(flightMaster) > INTERACTION_DISTANCE)
-        return MoveFarTo(flightMaster);
+        return MoveFarTo(flightMaster) != MoveFarOutcome::RouteFailed;
 
     std::vector<uint32> nodes = data.path;
 
@@ -494,7 +562,15 @@ bool NewRpgTravelFlightAction::Execute(Event /*event*/)
     if (bot->IsMounted())
         bot->Dismount();
 
-    bot->GetSession()->SendLearnNewTaxiNode(flightMaster);
+    for (uint32 node : nodes)
+    {
+        if (!bot->m_taxi.IsTaximaskNodeKnown(node))
+        {
+            LOG_DEBUG("playerbots", "[New RPG] {} rejected taxi route through unknown node {}", bot->GetName(), node);
+            info.ChangeToIdle();
+            return true;
+        }
+    }
 
     if (!bot->ActivateTaxiPathTo(nodes, flightMaster, 0))
     {
@@ -503,5 +579,130 @@ bool NewRpgTravelFlightAction::Execute(Event /*event*/)
         info.ChangeToIdle();
         return true;
     }
+    return true;
+}
+
+bool NewRpgTravelZoneAction::Execute(Event /*event*/)
+{
+    bool progressChecked = false;
+    if (CheckProgress(progressChecked))
+    {
+        LOG_INFO("playerbots", "[New RPG] {} cancelled zone travel after renewed XP or quest progress",
+                 bot->GetName());
+        botAI->rpgInfo.ChangeToIdle();
+        return true;
+    }
+
+    auto* data = std::get_if<NewRpgInfo::TravelZone>(&botAI->rpgInfo.data);
+    if (!data)
+        return false;
+
+    if (bot->GetZoneId() == data->destinationZoneId && bot->GetExactDist(data->destination) < 80.0f)
+    {
+        uint32 resumeQuestId = data->resumeQuestId;
+        botAI->rpgInfo.lastProgressAt = getMSTime();
+        botAI->rpgStatistic.zoneArrivals++;
+        LOG_INFO("playerbots", "[New RPG] {} arrived in zone {}", bot->GetName(), data->destinationZoneId);
+        if (resumeQuestId)
+        {
+            if (Quest const* quest = sObjectMgr->GetQuestTemplate(resumeQuestId))
+                botAI->rpgInfo.ChangeToDoQuest(resumeQuestId, quest);
+            else
+                botAI->rpgInfo.ChangeToIdle();
+        }
+        else
+            botAI->rpgInfo.ChangeToIdle();
+        return true;
+    }
+
+    auto routeFailed = [&]() -> bool
+    {
+        data->retryCount++;
+        if (data->retryCount <= 3)
+        {
+            RebuildZoneTravelRoute(*data);
+            return true;
+        }
+
+        if (SelectAlternateZoneHub(*data))
+            return true;
+
+        FinishZoneTravelFailure();
+        return true;
+    };
+
+    WorldPosition current(bot);
+    if (!data->lastMeaningfulPosition)
+    {
+        data->lastMeaningfulPosition = current;
+        data->lastMeaningfulMovementAt = getMSTime();
+    }
+    else if (current.GetMapId() != data->lastMeaningfulPosition.GetMapId() ||
+             current.GetExactDist(data->lastMeaningfulPosition) >= 10.0f)
+    {
+        data->lastMeaningfulPosition = current;
+        data->lastMeaningfulMovementAt = getMSTime();
+    }
+    else if (GetMSTimeDiffToNow(data->lastMeaningfulMovementAt) >= 90 * IN_MILLISECONDS)
+    {
+        return routeFailed();
+    }
+
+    if (data->route.empty())
+    {
+        if (RebuildZoneTravelRoute(*data))
+            return true;
+        return routeFailed();
+    }
+
+    if (data->routeStage >= data->route.size())
+    {
+        if (bot->GetZoneId() == data->destinationZoneId && bot->GetExactDist(data->destination) < 80.0f)
+            return false;
+        return routeFailed();
+    }
+
+    ZoneTravelStep const& step = data->route[data->routeStage];
+    if (data->loggedRouteStage != data->routeStage)
+    {
+        data->loggedRouteStage = data->routeStage;
+        LOG_INFO("playerbots", "[New RPG] {} travel method: {} (stage {}/{})", bot->GetName(),
+                 ZoneTravelRoutePolicy::GetMethodName(step.method), data->routeStage + 1, data->route.size());
+    }
+    float arrivalDistance = step.method == ZoneTravelMethod::Walk ? 12.0f : 40.0f;
+    if (current.GetMapId() == step.to.GetMapId() && current.GetExactDist(step.to) <= arrivalDistance)
+    {
+        data->routeStage++;
+        data->lastMeaningfulPosition = current;
+        data->lastMeaningfulMovementAt = getMSTime();
+        return true;
+    }
+
+    if (step.method == ZoneTravelMethod::Walk)
+    {
+        MoveFarOutcome outcome = MoveFarTo(step.to);
+        if (outcome == MoveFarOutcome::RouteFailed)
+            return routeFailed();
+        return true;
+    }
+
+    bool mustReachSource = step.method == ZoneTravelMethod::Transport ||
+                           step.method == ZoneTravelMethod::KnownTaxi ||
+                           step.method == ZoneTravelMethod::AreaTriggerPortal;
+    float sourceDistance = step.method == ZoneTravelMethod::Transport ? 10.0f : INTERACTION_DISTANCE;
+    if (mustReachSource &&
+        (current.GetMapId() != step.from.GetMapId() || current.GetExactDist(step.from) > sourceDistance))
+    {
+        MoveFarOutcome outcome = MoveFarTo(step.from);
+        if (outcome == MoveFarOutcome::RouteFailed)
+            return routeFailed();
+        return true;
+    }
+
+    ZoneTravelStepResult result = ZoneTravelRoutePolicy::ExecuteNonWalkStep(botAI, step);
+    if (result == ZoneTravelStepResult::Failed)
+        return routeFailed();
+    if (result == ZoneTravelStepResult::Complete)
+        data->routeStage++;
     return true;
 }

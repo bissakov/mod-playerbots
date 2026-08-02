@@ -17,6 +17,8 @@
 #include "Timer.h"
 #include "Log.h"
 
+#include <set>
+
 constexpr RandomPlayerbotFactory::NameRaceAndGender RandomPlayerbotFactory::CombineRaceAndGender(uint8 race,
                                                                                                 uint8 gender)
 {
@@ -667,6 +669,18 @@ void RandomPlayerbotFactory::CreateRandomBots()
             continue;
         }
 
+        // one character per allowed class: track what the account already has so
+        // repeated startups never create duplicates of an existing class
+        std::set<uint8> existingClasses;
+        if (QueryResult classResult =
+                CharacterDatabase.Query("SELECT class FROM characters WHERE account = {}", accountId))
+        {
+            do
+            {
+                existingClasses.insert(classResult->Fetch()[0].Get<uint8>());
+            } while (classResult->NextRow());
+        }
+
         if (!nameCached)
         {
             nameCached = true;
@@ -703,7 +717,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
                                                 time_t(0), LOCALE_enUS, 0, false, false, 0, true);
         sessionBots.push_back(session);
 
-        for (uint8 cls = CLASS_WARRIOR; cls < MAX_CLASSES - count; ++cls)
+        for (uint8 cls = CLASS_WARRIOR; cls < MAX_CLASSES; ++cls)
         {
             // skip nonexistent classes
             if (!((1 << (cls - 1)) & CLASSMASK_ALL_PLAYABLE) || !sChrClassesStore.LookupEntry(cls))
@@ -711,6 +725,10 @@ void RandomPlayerbotFactory::CreateRandomBots()
 
             // skip disabled with config classes
             if ((1 << (cls - 1)) & sWorld->getIntConfig(CONFIG_CHARACTER_CREATING_DISABLED_CLASSMASK))
+                continue;
+
+            // skip classes the account already has a character of
+            if (existingClasses.count(cls))
                 continue;
 
             Player* playerBot = factory.CreateRandomBot(session, cls, nameCache);

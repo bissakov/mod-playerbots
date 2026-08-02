@@ -702,6 +702,11 @@ bool PlayerbotAIConfig::Initialize()
     autoTeleportForLevel = sConfigMgr->GetOption<bool>("AiPlayerbot.AutoTeleportForLevel", false);
     autoDoQuests = sConfigMgr->GetOption<bool>("AiPlayerbot.AutoDoQuests", true);
     enableNewRpgStrategy = sConfigMgr->GetOption<bool>("AiPlayerbot.EnableNewRpgStrategy", true);
+    zoneProgressionEnabled = sConfigMgr->GetOption<bool>("AiPlayerbot.ZoneProgression.Enabled", true);
+    zoneProgressionNoProgressTimeout =
+        sConfigMgr->GetOption<uint32>("AiPlayerbot.ZoneProgression.NoProgressTimeout", 1800);
+    zoneProgressionRetryCooldown =
+        sConfigMgr->GetOption<uint32>("AiPlayerbot.ZoneProgression.RetryCooldown", 1800);
 
     RpgStatusProbWeight[RPG_WANDER_RANDOM] = sConfigMgr->GetOption<int32>("AiPlayerbot.RpgStatusProbWeight.WanderRandom", 15);
     RpgStatusProbWeight[RPG_WANDER_NPC] = sConfigMgr->GetOption<int32>("AiPlayerbot.RpgStatusProbWeight.WanderNpc", 20);

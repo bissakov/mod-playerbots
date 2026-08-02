@@ -9,6 +9,7 @@
 #include "GuildTaskMgr.h"
 #include "PerfMonitor.h"
 #include "PlayerbotMgr.h"
+#include "PlayerbotWorldThreadProcessor.h"
 #include "RandomPlayerbotMgr.h"
 #include "ScriptMgr.h"
 
@@ -65,6 +66,18 @@ public:
 
     static bool HandlePerfMonCommand(ChatHandler* /*handler*/, char const* args)
     {
+        if (!strcmp(args, "queue"))
+        {
+            PlayerbotWorldThreadProcessor::Statistics const stats =
+                PlayerbotWorldThreadProcessor::instance().GetStatistics();
+            LOG_INFO("playerbots",
+                     "World-thread queue: current={}, peak={}, processed={}, failed={}, skipped={}, "
+                     "average execution={}ms",
+                     stats.currentQueueSize, stats.maxQueueSize, stats.totalOperationsProcessed,
+                     stats.totalOperationsFailed, stats.totalOperationsSkipped, stats.averageExecutionTimeMs);
+            return true;
+        }
+
         if (!strcmp(args, "reset"))
         {
             sPerfMonitor.Reset();
