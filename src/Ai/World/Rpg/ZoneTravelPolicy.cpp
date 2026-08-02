@@ -166,20 +166,12 @@ bool ConvertTravelPath(PlayerbotAI* botAI, WorldPosition const& start, TravelPat
             case NODE_FLIGHTPATH:
             {
                 TaxiPathEntry const* taxiPath = sTaxiPathStore.LookupEntry(point.entry);
-                if (!taxiPath)
+                if (!taxiPath || !bot->m_taxi.IsTaximaskNodeKnown(taxiPath->from) ||
+                    !bot->m_taxi.IsTaximaskNodeKnown(taxiPath->to))
                     return false;
-
-                // Mirror TravelNodePath::getCost(): the planner only requires the arrival node to be
-                // known and lets taxi cheaters board anywhere, so a stricter rule here throws away the
-                // very route it just built. Player::ActivateTaxiPathTo() still charges cheaters the
-                // fare, so the price check stays unconditional.
-                if (!bot->isTaxiCheater() && !bot->m_taxi.IsTaximaskNodeKnown(taxiPath->to))
-                    return false;
-
                 travelPrice += taxiPath->price;
                 if (travelPrice > bot->GetMoney())
                     return false;
-
                 step.method = ZoneTravelMethod::KnownTaxi;
                 route.cost += 60.0f;
                 break;
@@ -247,13 +239,6 @@ ZoneTravelRoute ZoneTravelRoutePolicy::BuildRoute(PlayerbotAI* botAI, WorldPosit
     Player* bot = botAI->GetBot();
     WorldPosition start(bot);
     ZoneTravelRoute best = BuildGraphRoute(botAI, start, destination, bot);
-
-    // A bot-aware route can still price in a flight the bot cannot board (an unaffordable fare, or
-    // an unknown arrival node once the taxi cheat is off), and one unusable leg discards the whole
-    // route. Passing no bot makes TravelNodePath::getCost() reject every flight path, giving a
-    // slower but walkable fallback instead of stranding the bot in its current zone.
-    if (best.steps.empty())
-        best = BuildGraphRoute(botAI, start, destination, nullptr);
 
     for (auto const& [spellId, playerSpell] : bot->GetSpellMap())
     {
@@ -342,12 +327,8 @@ ZoneTravelStepResult ZoneTravelRoutePolicy::ExecuteNonWalkStep(PlayerbotAI* botA
         case ZoneTravelMethod::KnownTaxi:
         {
             TaxiPathEntry const* taxiPath = sTaxiPathStore.LookupEntry(step.objectId);
-            if (!taxiPath || taxiPath->price > bot->GetMoney())
-                return ZoneTravelStepResult::Failed;
-
-            // Same eligibility rule as the route builder, otherwise a step that passed planning
-            // fails here and the whole zone transition is abandoned.
-            if (!bot->isTaxiCheater() && !bot->m_taxi.IsTaximaskNodeKnown(taxiPath->to))
+            if (!taxiPath || !bot->m_taxi.IsTaximaskNodeKnown(taxiPath->from) ||
+                !bot->m_taxi.IsTaximaskNodeKnown(taxiPath->to) || taxiPath->price > bot->GetMoney())
                 return ZoneTravelStepResult::Failed;
 
             if (bot->IsInFlight())
