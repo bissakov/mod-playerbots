@@ -7,6 +7,7 @@
 #include "TravelMgr.h"
 
 #include <iomanip>
+#include <limits>
 #include <numeric>
 
 #include "AreaDefines.h"
@@ -4869,16 +4870,53 @@ void TravelMgr::PrepareDestinationCache()
         {
             CreatureTemplate const* creatureTemplate = sObjectMgr->GetCreatureTemplate(creatureDataList[0].id);
             uint32 level = (creatureTemplate->minlevel + creatureTemplate->maxlevel + 1) / 2;
+
+            // Use one of the spawns rather than scaling the grid key back up. The key is the
+            // spawn position rounded to a 50 yard cell, so un-rounding it moves the point by up
+            // to 25 yards on every axis -- including the vertical one, which left the target well
+            // above or below the ground. Bots cannot mesh-path to a point in the air, so they
+            // stood still until the ninety second no-progress timeout fired.
+            //
+            // Pick the spawn nearest the centroid rather than the centroid itself. A cell is 50
+            // yards wide and the interpolated midpoint of spawns on a slope or either side of a
+            // rock can hang off the ground or fall outside the zone the spawns belong to, which
+            // makes the caller's zone test reject the whole cell. An actual spawn point is on
+            // walkable ground and in a well defined zone by construction.
+            float centreX = 0.0f, centreY = 0.0f, centreZ = 0.0f;
+            for (CreatureData const& spawn : creatureDataList)
+            {
+                centreX += spawn.posX;
+                centreY += spawn.posY;
+                centreZ += spawn.posZ;
+            }
+            float const spawnCount = static_cast<float>(creatureDataList.size());
+            centreX /= spawnCount;
+            centreY /= spawnCount;
+            centreZ /= spawnCount;
+
+            CreatureData const* nearest = &creatureDataList[0];
+            float nearestDistance = std::numeric_limits<float>::max();
+            for (CreatureData const& spawn : creatureDataList)
+            {
+                float const dx = spawn.posX - centreX;
+                float const dy = spawn.posY - centreY;
+                float const dz = spawn.posZ - centreZ;
+                float const distance = dx * dx + dy * dy + dz * dz;
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearest = &spawn;
+                }
+            }
+
             for (int32 l = (int32)level - (int32)sPlayerbotAIConfig.randomBotTeleLowerLevel;
                  l <= (int32)level + (int32)sPlayerbotAIConfig.randomBotTeleHigherLevel; l++)
             {
                 if (l < 1 || l > int32(maxLevel))
                     continue;
 
-                locsPerLevelCache[(uint8)l].push_back(WorldLocation(std::get<0>(gridTuple),
-                    static_cast<float>(std::get<1>(gridTuple)) * 50.0f,
-                    static_cast<float>(std::get<2>(gridTuple)) * 50.0f,
-                    static_cast<float>(std::get<3>(gridTuple)) * 50.0f));
+                locsPerLevelCache[(uint8)l].push_back(
+                    WorldLocation(std::get<0>(gridTuple), nearest->posX, nearest->posY, nearest->posZ));
             }
         }
     }
