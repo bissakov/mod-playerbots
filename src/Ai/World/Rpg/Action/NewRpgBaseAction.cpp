@@ -414,7 +414,13 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
     std::size_t hubCandidates = candidates.size();
     bool directAttempted = false;
     bool directRouted = false;
-    if (candidates.empty() && breadcrumb && requestedDestination)
+    // A requestedZone of 0 means GetPositionZoneId() could not resolve the point,
+    // which happens when the grid backing it is not loaded even though
+    // FindCrossZoneBreadcrumb() resolved the same position earlier. Committing to it
+    // records a destination zone of 0, and the arrival test compares the bot's live
+    // zone against that, so the bot can never finish: it walks the route and then
+    // replans until it burns through its retries. Leave it to the hub candidates.
+    if (candidates.empty() && breadcrumb && requestedDestination && requestedZone)
     {
         directAttempted = true;
         ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, requestedDestination);

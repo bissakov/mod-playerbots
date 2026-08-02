@@ -1360,7 +1360,7 @@ TravelNodeRoute TravelNodeMap::getRoute(WorldPosition startPos, WorldPosition en
             // Check if the bot can actually walk to this start position.
             newStartPath = startPath;
             if (startNodePosition.cropPathTo(newStartPath, maxStartDistance) ||
-                startNode->getPosition()->isPathTo(newStartPath = startPos.getPathTo(startNodePosition, nullptr),
+                startNode->getPosition()->isPathTo(newStartPath = startPos.getPathTo(startNodePosition, bot),
                                                    maxStartDistance))
             {
                 startPath = newStartPath;
@@ -1385,6 +1385,12 @@ TravelNodeRoute TravelNodeMap::getRoute(WorldPosition startPos, WorldPosition en
     {
         startPath.clear();
         TravelNode* botNode = TravelNodeMap::instance().teleportNodes[bot->GetGUID()][0];
+        // Only allocate the scratch node the first time this bot needs one. The
+        // bare block this replaces allocated unconditionally and overwrote the
+        // cached pointer, leaking a TravelNode on every call. This is the fallback
+        // taken after all twenty-five start/end node combinations fail, which is
+        // the common path for a bot that cannot route, so it leaked steadily.
+        if (!botNode)
         {
             botNode = new TravelNode(startPos, "Bot Pos", false);
             TravelNodeMap::instance().teleportNodes[bot->GetGUID()][0] = botNode;
@@ -1413,9 +1419,19 @@ TravelPath TravelNodeMap::getFullPath(WorldPosition startPos, WorldPosition endP
     PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
     std::vector<WorldPosition> beginPath, endPath;
 
-    beginPath = endPos.getPathFromPath({startPos}, nullptr, 40);
+    // getPathStepFrom() returns nothing without a unit to path with, so passing nullptr here
+    // made the direct path shortcut below dead code for every caller that had a bot.
+    beginPath = endPos.getPathFromPath({startPos}, bot, 40);
 
-    if (endPos.isPathTo(beginPath))
+    // How close the generated path has to land to count as reaching the destination.
+    // isPathTo() defaults this to targetPosRecalcDistance, which is a movement-precision
+    // threshold (0.1 yards, "has the move target drifted enough to replan") rather than an
+    // arrival tolerance -- the same constant that was already found misused for node arrival
+    // in getRoute(). A mesh path ends on a navmesh polygon, and a quest objective is usually
+    // a little off the mesh, so demanding it terminate within ten centimetres rejects
+    // essentially every direct path. That made even an eighty yard hop fall through to node
+    // routing and report no route at all. Ten yards matches the node arrival tolerance.
+    if (endPos.isPathTo(beginPath, 10.0f))
         return TravelPath(beginPath);
 
     //[[Node pathfinding system]]
@@ -1439,7 +1455,9 @@ TravelPath TravelNodeMap::getFullPath(WorldPosition startPos, WorldPosition endP
         }
     }
 
-    endPath = route.getNodes().back()->getPosition()->getPathTo(endPos, nullptr);
+    // Without a unit this leg comes back empty and the route stops at the last node instead of
+    // continuing on to the destination itself.
+    endPath = route.getNodes().back()->getPosition()->getPathTo(endPos, bot);
     movePath = route.buildPath(beginPath, endPath);
 
     if (sPlayerbotAIConfig.hasLog("bot_pathfinding.csv"))

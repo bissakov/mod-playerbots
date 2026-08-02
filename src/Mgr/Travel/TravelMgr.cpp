@@ -784,8 +784,15 @@ std::vector<WorldPosition> WorldPosition::getPathStepFrom(WorldPosition startPos
     // Load mmaps and vmaps between the two points.
     loadMapAndVMaps(startPos);
 
+    // Path from startPos to this position. The single-destination CalculatePath() overload
+    // starts from the owner's own position and ignores the target entirely, so this used to
+    // compute a path from the bot to startPos. Callers pass their own position as startPos,
+    // which made every step a zero length path: getPathFromPath() then saw no progress on its
+    // first iteration and returned the start point alone, so every caller that asks whether a
+    // position is reachable answered no unless it was already standing there.
     PathGenerator path(bot);
-    path.CalculatePath(startPos.GetPositionX(), startPos.GetPositionY(), startPos.GetPositionZ());
+    path.CalculatePath(startPos.GetPositionX(), startPos.GetPositionY(), startPos.GetPositionZ(),
+                       GetPositionX(), GetPositionY(), GetPositionZ(), false);
 
     Movement::PointsArray points = path.GetPath();
     PathType type = path.GetPathType();

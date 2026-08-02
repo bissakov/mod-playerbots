@@ -134,12 +134,24 @@ bool ConvertTravelPath(PlayerbotAI* botAI, WorldPosition const& start, TravelPat
         walkEnd = WorldPosition();
     };
 
+    // How far a walk leg may run before it is emitted as its own step. A whole
+    // navmesh path used to collapse into a single Walk to its final point, which
+    // threw away every corner the path was computed to go around and left the bot
+    // aimed straight at a destination thousands of yards away. MoveFarTo cannot
+    // mesh-path that far in one go, so the bot stood still until the 90 second
+    // no-progress timeout fired. Emitting intermediate legs keeps each move target
+    // within pathable range; MoveFarTo still routes around obstacles within a leg,
+    // so coalescing the closely spaced points costs nothing.
+    constexpr float walkSegmentLength = 50.0f;
+
     for (size_t i = 0; i < points.size(); ++i)
     {
         PathNodePoint const& point = points[i];
         if (point.type == NODE_PREPATH || point.type == NODE_PATH || point.type == NODE_NODE)
         {
             walkEnd = point.point;
+            if (previous.fDist(walkEnd) >= walkSegmentLength)
+                flushWalk();
             continue;
         }
 
