@@ -70,7 +70,20 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
 
     bool progressChecked = false;
     bool madeProgress = CheckProgress(progressChecked);
-    if (madeProgress && status == RPG_TRAVEL_ZONE)
+
+    // Only the no-progress fallback migration should be abandoned once the bot starts
+    // progressing again: it exists purely to unstick a bot that had stopped advancing.
+    // A breadcrumb migration is walking towards a quest objective in another zone, and
+    // killing things on the way is the expected behaviour, not a reason to turn back.
+    // Cancelling those meant almost every trip aborted within seconds of starting.
+    bool cancellableTravel = false;
+    if (status == RPG_TRAVEL_ZONE)
+    {
+        auto const& travelData = std::get<NewRpgInfo::TravelZone>(info.data);
+        cancellableTravel = !travelData.breadcrumb;
+    }
+
+    if (madeProgress && status == RPG_TRAVEL_ZONE && cancellableTravel)
     {
         LOG_INFO("playerbots", "[New RPG] {} cancelled zone travel after renewed XP or quest progress",
                  bot->GetName());
@@ -591,18 +604,21 @@ bool NewRpgTravelFlightAction::Execute(Event /*event*/)
 
 bool NewRpgTravelZoneAction::Execute(Event /*event*/)
 {
+    auto* data = std::get_if<NewRpgInfo::TravelZone>(&botAI->rpgInfo.data);
+    if (!data)
+        return false;
+
+    // Same rule as NewRpgStatusUpdateAction: abandoning the trip on renewed progress only
+    // makes sense for the no-progress fallback migration. A breadcrumb trip is heading for
+    // a quest objective, so earning XP on the way is the point, not a reason to stop.
     bool progressChecked = false;
-    if (CheckProgress(progressChecked))
+    if (!data->breadcrumb && CheckProgress(progressChecked))
     {
         LOG_INFO("playerbots", "[New RPG] {} cancelled zone travel after renewed XP or quest progress",
                  bot->GetName());
         botAI->rpgInfo.ChangeToIdle();
         return true;
     }
-
-    auto* data = std::get_if<NewRpgInfo::TravelZone>(&botAI->rpgInfo.data);
-    if (!data)
-        return false;
 
     if (bot->GetZoneId() == data->destinationZoneId && bot->GetExactDist(data->destination) < 80.0f)
     {
