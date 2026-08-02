@@ -45,7 +45,7 @@ bool BankAction::ExecuteBank(std::string const text, Unit* /*bank*/)
         for (std::vector<Item*>::iterator i = found.begin(); i != found.end(); i++)
         {
             Item* item = *i;
-            result &= Withdraw(item->GetTemplate()->ItemId);
+            result |= Withdraw(item->GetTemplate()->ItemId);
         }
     }
     else
@@ -60,7 +60,7 @@ bool BankAction::ExecuteBank(std::string const text, Unit* /*bank*/)
             if (!item)
                 continue;
 
-            result &= Deposit(item);
+            result |= Deposit(item);
         }
     }
 

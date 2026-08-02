@@ -21,6 +21,11 @@ public:
     bool Execute(Event event) override;
     void Sell(FindItemVisitor* visitor);
     void Sell(Item* item);
+
+private:
+    bool FindVendor();
+
+    ObjectGuid vendorGuid;
 };
 
 #endif

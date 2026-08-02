@@ -20,6 +20,7 @@
 #include "ChangeTalentsAction.h"
 #include "CheckMailAction.h"
 #include "CheckValuesAction.h"
+#include "ChoreActions.h"
 #include "ChooseRpgTargetAction.h"
 #include "ChooseTargetActions.h"
 #include "ChooseTravelTargetAction.h"
@@ -214,6 +215,10 @@ public:
         creators["remove bobber strategy"] = &ActionContext::remove_bobber_strategy;
         creators["roll"] = &ActionContext::roll_action;
         creators["cancel channel"] = &ActionContext::cancel_channel;
+        creators["sell chore"] = &ActionContext::sell_chore;
+        creators["train chore"] = &ActionContext::train_chore;
+        creators["bank chore"] = &ActionContext::bank_chore;
+        creators["buy bags chore"] = &ActionContext::buy_bags_chore;
 
         // BG Tactics
         creators["bg tactics"] = &ActionContext::bg_tactics;
@@ -473,6 +478,10 @@ private:
     static Action* rpg_trade_useful(PlayerbotAI* botAI) { return new RpgTradeUsefulAction(botAI); }
     static Action* rpg_duel(PlayerbotAI* botAI) { return new RpgDuelAction(botAI); }
     static Action* rpg_mount_anim(PlayerbotAI* botAI) { return new RpgMountAnimAction(botAI); }
+    static Action* sell_chore(PlayerbotAI* botAI) { return new SellChoreAction(botAI); }
+    static Action* train_chore(PlayerbotAI* botAI) { return new TrainChoreAction(botAI); }
+    static Action* bank_chore(PlayerbotAI* botAI) { return new BankChoreAction(botAI); }
+    static Action* buy_bags_chore(PlayerbotAI* botAI) { return new BuyBagsChoreAction(botAI); }
 
     static Action* toggle_pet_spell(PlayerbotAI* ai) { return new TogglePetSpellAutoCastAction(ai); }
     static Action* pet_attack(PlayerbotAI* ai) { return new PetAttackAction(ai); }

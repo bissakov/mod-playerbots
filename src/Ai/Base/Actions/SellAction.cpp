@@ -7,10 +7,10 @@
 #include "SellAction.h"
 
 #include "Event.h"
+#include "ItemPackets.h"
 #include "ItemUsageValue.h"
 #include "ItemVisitors.h"
 #include "Playerbots.h"
-#include "ItemPackets.h"
 
 class SellItemsVisitor : public IterateItemsVisitor
 {
@@ -60,6 +60,9 @@ public:
 
 bool SellAction::Execute(Event event)
 {
+    if (!FindVendor())
+        return false;
+
     std::string const text = event.getParam();
     if (text == "gray" || text == "*")
     {
@@ -101,37 +104,43 @@ void SellAction::Sell(FindItemVisitor* visitor)
 
 void SellAction::Sell(Item* item)
 {
+    if (!bot->GetNPCIfCanInteractWith(vendorGuid, UNIT_NPC_FLAG_VENDOR))
+        return;
+
+    ItemTemplate const* itemTemplate = item->GetTemplate();
+    ObjectGuid itemGuid = item->GetGUID();
+    uint32 count = item->GetCount();
+    uint32 botMoney = bot->GetMoney();
+
+    WorldPacket packet(CMSG_SELL_ITEM);
+    packet << vendorGuid << itemGuid << count;
+
+    WorldPackets::Item::SellItem sellPacket(std::move(packet));
+    sellPacket.Read();
+    bot->GetSession()->HandleSellItemOpcode(sellPacket);
+
+    if (botAI->HasCheat(BotCheatMask::gold))
+        bot->SetMoney(botMoney);
+
     std::ostringstream out;
+    out << "Selling " << chat->FormatItem(itemTemplate);
+    botAI->TellMaster(out);
 
-    GuidVector vendors = botAI->GetAiObjectContext()->GetValue<GuidVector>("nearest npcs")->Get();
+    bot->PlayDistanceSound(120);
+}
 
-    for (ObjectGuid const vendorguid : vendors)
+bool SellAction::FindVendor()
+{
+    vendorGuid = ObjectGuid::Empty;
+    GuidVector const vendors = AI_VALUE(GuidVector, "nearest npcs");
+    for (ObjectGuid const& guid : vendors)
     {
-        Creature* pCreature = bot->GetNPCIfCanInteractWith(vendorguid, UNIT_NPC_FLAG_VENDOR);
-        if (!pCreature)
+        if (!bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_VENDOR))
             continue;
 
-        ObjectGuid itemguid = item->GetGUID();
-        uint32 count = item->GetCount();
-
-        uint32 botMoney = bot->GetMoney();
-
-        WorldPacket p(CMSG_SELL_ITEM);
-        p << vendorguid << itemguid << count;
-
-        WorldPackets::Item::SellItem nicePacket(std::move(p));
-        nicePacket.Read();
-        bot->GetSession()->HandleSellItemOpcode(nicePacket);
-
-        if (botAI->HasCheat(BotCheatMask::gold))
-        {
-            bot->SetMoney(botMoney);
-        }
-
-        out << "Selling " << chat->FormatItem(item->GetTemplate());
-        botAI->TellMaster(out);
-
-        bot->PlayDistanceSound(120);
-        break;
+        vendorGuid = guid;
+        return true;
     }
+
+    return false;
 }

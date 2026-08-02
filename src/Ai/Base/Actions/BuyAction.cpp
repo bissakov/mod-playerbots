@@ -17,11 +17,17 @@
 bool BuyAction::Execute(Event event)
 {
     bool buyUseful = false;
+    bool buyBagsOnly = false;
     ItemIds itemIds;
     std::string const link = event.getParam();
 
     if (link == "vendor")
         buyUseful = true;
+    else if (link == "bags")
+    {
+        buyUseful = true;
+        buyBagsOnly = true;
+    }
     else
     {
         itemIds = chat->parseItems(link);
@@ -53,10 +59,13 @@ bool BuyAction::Execute(Event event)
             VendorItemList m_items_sorted = tItems->m_items;
 
             m_items_sorted.erase(std::remove_if(m_items_sorted.begin(), m_items_sorted.end(),
-                                                [](VendorItem* i)
+                                                [buyBagsOnly](VendorItem* i)
                                                 {
                                                     ItemTemplate const* proto = sObjectMgr->GetItemTemplate(i->item);
-                                                    return !proto;
+                                                    return !proto ||
+                                                           (buyBagsOnly &&
+                                                            (proto->Class != ITEM_CLASS_CONTAINER ||
+                                                             proto->SubClass != ITEM_SUBCLASS_CONTAINER));
                                                 }),
                                  m_items_sorted.end());
 
@@ -171,6 +180,8 @@ bool BuyAction::Execute(Event event)
                     if (!BuyItem(tItems, vendorguid, proto))
                         break;
 
+                    result = true;
+
                     // Store the best item score per InventoryType
                     bestPurchasedItemScore[invType] = newScore;
 
@@ -214,7 +225,7 @@ bool BuyAction::Execute(Event event)
         }
     }
 
-    return vendored;
+    return buyBagsOnly ? result : vendored;
 }
 
 bool BuyAction::BuyItem(VendorItemData const* tItems, ObjectGuid vendorguid, ItemTemplate const* proto)

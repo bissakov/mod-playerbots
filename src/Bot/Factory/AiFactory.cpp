@@ -593,6 +593,8 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
     {
         Player* master = facade->GetMaster();
 
+        nonCombatEngine->addStrategy("chores", false);
+
         // let 25% of free bots start duels.
         if (!urand(0, 3))
             nonCombatEngine->addStrategy("start duel", false);
@@ -625,8 +627,8 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
             if (sPlayerbotAIConfig.randomBotJoinBG)
                 nonCombatEngine->addStrategy("bg", false);
 
-            // if (!master || GET_PLAYERBOT_AI(master))
-            //     nonCombatEngine->addStrategy("maintenance");
+            if (!master || GET_PLAYERBOT_AI(master))
+                nonCombatEngine->addStrategy("maintenance", false);
 
             nonCombatEngine->ChangeStrategy(sPlayerbotAIConfig.randomBotNonCombatStrategies);
         }
@@ -654,8 +656,8 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
                         //     nonCombatEngine->addStrategy("move random");
                         // }
 
-                        // if (masterBotAI)
-                        //     nonCombatEngine->addStrategy("maintenance");
+                        if (masterBotAI)
+                            nonCombatEngine->addStrategy("maintenance", false);
 
                         nonCombatEngine->ChangeStrategy(sPlayerbotAIConfig.randomBotNonCombatStrategies);
                     }
