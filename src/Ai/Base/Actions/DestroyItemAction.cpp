@@ -29,16 +29,67 @@ void DestroyItemAction::DestroyItem(FindItemVisitor* visitor)
     IterateItems(visitor);
     std::vector<Item*> items = visitor->GetResult();
     for (Item* item : items)
-    {
-        std::ostringstream out;
-        out << chat->FormatItem(item->GetTemplate()) << " destroyed";
-        botAI->TellMaster(out);
+        DestroyItem(item);
+}
 
-        bot->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
-    }
+void DestroyItemAction::DestroyItem(Item* item)
+{
+    std::ostringstream out;
+    out << chat->FormatItem(item->GetTemplate()) << " destroyed";
+    botAI->TellMaster(out);
+
+    bot->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
 }
 
 bool SmartDestroyItemAction::isUseful() { return !botAI->HasActivePlayerMaster(); }
+
+std::vector<ItemUsage> SmartDestroyItemAction::GetEvictionOrder(PlayerbotAI* botAI)
+{
+    AiObjectContext* context = botAI->GetAiObjectContext();
+    std::vector<ItemUsage> order = {ITEM_USAGE_NONE};
+
+    if (!context->GetValue<bool>("can sell")->Get() && context->GetValue<bool>("should get money")->Get())
+        order.push_back(ITEM_USAGE_QUEST);
+    else
+    {
+        order.push_back(ITEM_USAGE_VENDOR);
+        order.push_back(ITEM_USAGE_AH);
+    }
+
+    order.push_back(ITEM_USAGE_SKILL);
+    order.push_back(ITEM_USAGE_USE);
+    return order;
+}
+
+Item* SmartDestroyItemAction::FindItemToEvict(PlayerbotAI* botAI, ItemUsage incomingUsage)
+{
+    if (incomingUsage == ITEM_USAGE_NONE)
+        return nullptr;
+
+    AiObjectContext* context = botAI->GetAiObjectContext();
+    std::vector<ItemUsage> const order = GetEvictionOrder(botAI);
+    auto const incomingPosition = std::find(order.begin(), order.end(), incomingUsage);
+
+    for (auto carriedPosition = order.begin(); carriedPosition != order.end(); ++carriedPosition)
+    {
+        std::vector<Item*> items = context->GetValue<std::vector<Item*>>(
+            "inventory items", "usage " + std::to_string(*carriedPosition))->Get();
+        if (items.empty())
+            continue;
+
+        // Vendor trash may replace useless items, but never protected quest or equipment-related items.
+        if (incomingUsage == ITEM_USAGE_VENDOR && *carriedPosition != ITEM_USAGE_NONE)
+            return nullptr;
+
+        if (incomingPosition != order.end() && incomingPosition <= carriedPosition)
+            return nullptr;
+
+        // SmartDestroyItemAction reverses this value before eviction, so its last item is the first candidate.
+        return items.back();
+    }
+
+    return nullptr;
+}
 
 bool SmartDestroyItemAction::Execute(Event /*event*/)
 {
@@ -68,25 +119,7 @@ bool SmartDestroyItemAction::Execute(Event /*event*/)
         return true;
     }
 
-    std::vector<uint32> bestToDestroy = {ITEM_USAGE_NONE};  // First destroy anything useless.
-
-    if (!AI_VALUE(bool, "can sell") &&
-        AI_VALUE(
-            bool,
-            "should get money"))  // We need money so quest items are less important since they can't directly be sold.
-        bestToDestroy.push_back(ITEM_USAGE_QUEST);
-    else  // We don't need money so destroy the cheapest stuff.
-    {
-        bestToDestroy.push_back(ITEM_USAGE_VENDOR);
-        bestToDestroy.push_back(ITEM_USAGE_AH);
-    }
-
-    // If we still need room
-    bestToDestroy.push_back(
-        ITEM_USAGE_SKILL);  // Items that might help tradeskill are more important than above but still expenable.
-    bestToDestroy.push_back(ITEM_USAGE_USE);  // These are more likely to be usefull 'soon' but still expenable.
-
-    for (auto& usage : bestToDestroy)
+    for (ItemUsage usage : GetEvictionOrder(botAI))
     {
         std::vector<Item*> items = AI_VALUE2(std::vector<Item*>, "inventory items", "usage " + std::to_string(usage));
         std::reverse(items.begin(), items.end());

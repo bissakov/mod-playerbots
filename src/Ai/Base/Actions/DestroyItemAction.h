@@ -8,8 +8,10 @@
 #define PLAYERBOTS_DESTROYITEMACTION_H
 
 #include "InventoryAction.h"
+#include "ItemUsageValue.h"
 
 class FindItemVisitor;
+class Item;
 class PlayerbotAI;
 
 class DestroyItemAction : public InventoryAction
@@ -18,6 +20,7 @@ public:
     DestroyItemAction(PlayerbotAI* botAI, std::string const name = "destroy") : InventoryAction(botAI, name) {}
 
     bool Execute(Event event) override;
+    void DestroyItem(Item* item);
 
 protected:
     void DestroyItem(FindItemVisitor* visitor);
@@ -30,6 +33,9 @@ public:
 
     bool Execute(Event event) override;
     bool isUseful() override;
+
+    static std::vector<ItemUsage> GetEvictionOrder(PlayerbotAI* botAI);
+    static Item* FindItemToEvict(PlayerbotAI* botAI, ItemUsage incomingUsage);
 };
 
 #endif

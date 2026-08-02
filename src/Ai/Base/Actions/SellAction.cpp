@@ -102,6 +102,15 @@ void SellAction::Sell(FindItemVisitor* visitor)
     }
 }
 
+bool SellAction::SellOne(Item* item)
+{
+    if (!FindVendor())
+        return false;
+
+    Sell(item);
+    return true;
+}
+
 void SellAction::Sell(Item* item)
 {
     if (!bot->GetNPCIfCanInteractWith(vendorGuid, UNIT_NPC_FLAG_VENDOR))

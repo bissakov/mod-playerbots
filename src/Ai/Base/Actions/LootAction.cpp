@@ -6,6 +6,7 @@
 #include "LootAction.h"
 
 #include "ChatHelper.h"
+#include "DestroyItemAction.h"
 #include "Event.h"
 #include "GuildMgr.h"
 #include "GuildTaskMgr.h"
@@ -15,6 +16,7 @@
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "ServerFacade.h"
+#include "SellAction.h"
 #include "GuildMgr.h"
 #include "BroadcastHelper.h"
 
@@ -407,23 +409,37 @@ bool StoreLootAction::Execute(Event event)
         {
             uint32 maxStack = proto->GetMaxStackSize();
             if (maxStack == 1)
-                continue;
-
-            std::vector<Item*> found = parseItems(chat->FormatItem(proto));
-
-            bool hasFreeStack = false;
-
-            for (auto stack : found)
             {
-                if (stack->GetCount() + itemcount < maxStack)
+                ItemUsage incomingUsage = AI_VALUE2(ItemUsage, "item usage", itemid);
+                Item* itemToEvict = SmartDestroyItemAction::FindItemToEvict(botAI, incomingUsage);
+                if (!itemToEvict)
+                    continue;
+
+                SellAction sellAction(botAI);
+                if (!sellAction.SellOne(itemToEvict))
                 {
-                    hasFreeStack = true;
-                    break;
+                    DestroyItemAction destroyAction(botAI);
+                    destroyAction.DestroyItem(itemToEvict);
                 }
             }
+            else
+            {
+                std::vector<Item*> found = parseItems(chat->FormatItem(proto));
 
-            if (!hasFreeStack)
-                continue;
+                bool hasFreeStack = false;
+
+                for (auto stack : found)
+                {
+                    if (stack->GetCount() + itemcount < maxStack)
+                    {
+                        hasFreeStack = true;
+                        break;
+                    }
+                }
+
+                if (!hasFreeStack)
+                    continue;
+            }
         }
 
         Player* master = botAI->GetMaster();
