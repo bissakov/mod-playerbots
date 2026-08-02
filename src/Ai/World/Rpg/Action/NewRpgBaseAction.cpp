@@ -3,11 +3,14 @@
 #include "BroadcastHelper.h"
 #include "ChatHelper.h"
 #include "Creature.h"
+#include "DBCStores.h"
 #include "G3D/Vector2.h"
 #include "GameObject.h"
 #include "GossipDef.h"
 #include "GridTerrainData.h"
 #include "IVMapMgr.h"
+#include "Map.h"
+#include "MapMgr.h"
 #include "NewRpgInfo.h"
 #include "NewRpgStrategy.h"
 #include "Object.h"
@@ -27,26 +30,42 @@
 #include "QuestPackets.h"
 #include "Random.h"
 #include "RandomPlayerbotMgr.h"
+#include "RBAC.h"
 #include "SharedDefines.h"
 #include "StatsWeightCalculator.h"
 #include "Timer.h"
 #include "TravelMgr.h"
+#include "ZoneTravelPolicy.h"
 
-bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
+namespace
+{
+constexpr uint32 PLAYER_UNSTUCK_SPELL = 7355;
+constexpr uint32 PLAYER_UNSTUCK_FAILURES = 3;
+constexpr uint32 PLAYER_UNSTUCK_COOLDOWN = 15 * MINUTE * IN_MILLISECONDS;
+}
+
+MoveFarOutcome NewRpgBaseAction::MoveFarTo(WorldPosition dest)
 {
     if (dest == WorldPosition())
-        return false;
+        return MoveFarOutcome::RouteFailed;
 
-    if (dest != botAI->rpgInfo.moveFarPos)
+    NewRpgInfo& info = botAI->rpgInfo;
+    WorldPosition current(bot);
+    if (info.localRouteFailureAnchor &&
+        (current.GetMapId() != info.localRouteFailureAnchor.GetMapId() ||
+         current.GetExactDist(info.localRouteFailureAnchor) >= 10.0f))
+        info.ResetLocalRouteFailures();
+
+    if (dest != info.moveFarPos)
     {
         // clear stuck information if it's a new dest
-        botAI->rpgInfo.SetMoveFarTo(dest);
+        info.SetMoveFarTo(dest);
     }
 
     // performance optimization
     if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
     {
-        return false;
+        return MoveFarOutcome::Waiting;
     }
 
     // Let previously committed movement finish before recomputing.
@@ -65,7 +84,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     // If the bot is still actively walking toward its last
     // committed point on the same map, just let the current spline
     // finish. The stuck counter below continues to track real
-    // progress toward dest and triggers teleport recovery if the
+    // progress toward dest and reports a route failure if the
     // committed paths genuinely aren't closing the gap.
     {
         LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
@@ -73,7 +92,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         {
             float remaining = bot->GetExactDist(lastMove.lastMoveToX, lastMove.lastMoveToY, lastMove.lastMoveToZ);
             if (remaining > 10.0f)
-                return true;
+                return MoveFarOutcome::Moving;
         }
     }
 
@@ -82,37 +101,89 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     // Require a meaningful improvement (5yd) to reset the stuck counter.
     // The old 1yd threshold was small enough that bots oscillating back
     // and forth around an obstacle would keep "making progress" forever
-    // and never trigger the teleport recovery below.
-    if (disToDest + 5.0f < botAI->rpgInfo.nearestMoveFarDis)
+    // and never report the blocked route.
+    if (disToDest + 5.0f < info.nearestMoveFarDis)
     {
-        botAI->rpgInfo.nearestMoveFarDis = disToDest;
-        botAI->rpgInfo.stuckTs = getMSTime();
-        botAI->rpgInfo.stuckAttempts = 0;
+        info.nearestMoveFarDis = disToDest;
+        info.stuckTs = getMSTime();
+        info.stuckAttempts = 0;
     }
-    else if (++botAI->rpgInfo.stuckAttempts >= 5 && GetMSTimeDiffToNow(botAI->rpgInfo.stuckTs) >= stuckTime)
+    else if (++info.stuckAttempts >= 5 && GetMSTimeDiffToNow(info.stuckTs) >= stuckTime)
     {
-        // No meaningful progress toward dest for `stuckTime`: fall
-        // back to teleporting directly so the bot can get on with
-        // its RPG objective instead of oscillating indefinitely.
-        botAI->rpgInfo.stuckTs = getMSTime();
-        botAI->rpgInfo.stuckAttempts = 0;
+        // No meaningful progress toward dest for `stuckTime`: let
+        // the caller rebuild the legitimate route.
+        info.stuckTs = getMSTime();
+        info.stuckAttempts = 0;
+        info.nearestMoveFarDis = disToDest;
         const AreaTableEntry* entry = sAreaTableStore.LookupEntry(bot->GetZoneId());
         std::string zone_name = PlayerbotAI::GetLocalizedAreaName(entry);
-        LOG_DEBUG(
-            "playerbots",
-            "[New RPG] Teleport {} from ({},{},{},{}) to ({},{},{},{}) as it stuck when moving far - Zone: {} ({})",
-            bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetMapId(),
-            dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), dest.GetMapId(), bot->GetZoneId(),
-            zone_name);
-        bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
-        return bot->TeleportTo(dest);
+        LOG_DEBUG("playerbots",
+                  "[New RPG] {} route failed after 90 seconds without movement from ({},{},{},{}) toward "
+                  "({},{},{},{}) - Zone: {} ({})",
+                  bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetMapId(),
+                  dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), dest.GetMapId(), bot->GetZoneId(),
+                  zone_name);
+
+        // The normal player `.unstuck` command casts spell 7355. AzerothCore's
+        // spell effect uses a real, ready hearthstone when one is owned;
+        // otherwise it makes the command's collision-safe five-yard nudge.
+        // Keep this out of zone travel, whose route retries and alternate-hub
+        // policy must remain authoritative.
+        if (info.GetStatus() != RPG_TRAVEL_ZONE)
+        {
+            WorldPosition failurePosition(bot);
+            if (!info.localRouteFailureAnchor ||
+                failurePosition.GetMapId() != info.localRouteFailureAnchor.GetMapId() ||
+                failurePosition.GetExactDist(info.localRouteFailureAnchor) >= 10.0f)
+            {
+                info.localRouteFailureAnchor = failurePosition;
+                info.consecutiveLocalRouteFailures = 1;
+            }
+            else
+                info.consecutiveLocalRouteFailures++;
+
+            bool unstuckReady = !info.lastPlayerUnstuckAt ||
+                                GetMSTimeDiffToNow(info.lastPlayerUnstuckAt) >= PLAYER_UNSTUCK_COOLDOWN;
+            if (info.consecutiveLocalRouteFailures >= PLAYER_UNSTUCK_FAILURES && unstuckReady &&
+                !bot->IsInCombat() && !bot->IsInFlight() && !bot->InBattleground() &&
+                bot->GetSession()->HasPermission(rbac::RBAC_PERM_COMMAND_UNSTUCK))
+            {
+                bool usesHearthstone = bot->GetItemByEntry(6948) && !bot->HasSpellCooldown(8690);
+                info.lastPlayerUnstuckAt = getMSTime();
+                SpellCastResult result = bot->CastSpell(bot, PLAYER_UNSTUCK_SPELL, false);
+                if (result == SPELL_CAST_OK)
+                {
+                    if (usesHearthstone)
+                        botAI->rpgStatistic.playerUnstuckHearths++;
+                    else
+                        botAI->rpgStatistic.playerUnstuckNudges++;
+
+                    LOG_WARN("playerbots",
+                             "[New RPG] {} invoked the normal player unstuck service after {} local route "
+                             "failures using {}",
+                             bot->GetName(), info.consecutiveLocalRouteFailures,
+                             usesHearthstone ? "hearthstone" : "collision-safe nudge");
+                    info.ResetLocalRouteFailures();
+                    info.SetMoveFarTo(WorldPosition());
+                    info.ChangeToIdle();
+                    botAI->SetNextCheckDelay(usesHearthstone ? 12 * IN_MILLISECONDS : IN_MILLISECONDS);
+                    return MoveFarOutcome::Recovered;
+                }
+
+                LOG_DEBUG("playerbots", "[New RPG] {} could not cast the normal player unstuck spell ({})",
+                          bot->GetName(), static_cast<uint32>(result));
+            }
+        }
+        return MoveFarOutcome::RouteFailed;
     }
 
     float dis = bot->GetExactDist(dest);
     if (dis < pathFinderDis)
     {
         return MoveTo(dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), false, false,
-                      false, true);
+                      false, true)
+                   ? MoveFarOutcome::Moving
+                   : MoveFarOutcome::RouteFailed;
     }
 
     const uint32 typeOk = PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_FARFROMPOLY;
@@ -143,7 +214,9 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             float endDistToDest = dest.GetExactDist(endPos.x, endPos.y, endPos.z);
             if (endDistToDest + 5.0f < disToDest)
             {
-                return MoveTo(bot->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, true);
+                return MoveTo(bot->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, true)
+                           ? MoveFarOutcome::Moving
+                           : MoveFarOutcome::RouteFailed;
             }
         }
     }
@@ -185,9 +258,223 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     }
     if (found)
     {
-        return MoveTo(bot->GetMapId(), rx, ry, rz, false, false, false, true);
+        return MoveTo(bot->GetMapId(), rx, ry, rz, false, false, false, true) ? MoveFarOutcome::Moving
+                                                                              : MoveFarOutcome::RouteFailed;
+    }
+    return MoveFarOutcome::RouteFailed;
+}
+
+bool NewRpgBaseAction::CheckProgress(bool& checked)
+{
+    checked = false;
+    NewRpgInfo& info = botAI->rpgInfo;
+    uint32 now = getMSTime();
+    if (info.lastProgressCheckAt && GetMSTimeDiffToNow(info.lastProgressCheckAt) < MINUTE * IN_MILLISECONDS)
+        return false;
+
+    checked = true;
+    info.lastProgressCheckAt = now;
+    uint64 signature = 1469598103934665603ULL;
+    auto add = [&signature](uint64 value)
+    {
+        signature ^= value;
+        signature *= 1099511628211ULL;
+    };
+
+    add(bot->GetLevel());
+    add(bot->GetUInt32Value(PLAYER_XP));
+    add(bot->GetRewardedQuestCount());
+    for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+    {
+        uint32 questId = bot->GetQuestSlotQuestId(slot);
+        if (!questId)
+            continue;
+
+        add(questId);
+        auto status = bot->getQuestStatusMap().find(questId);
+        if (status == bot->getQuestStatusMap().end())
+            continue;
+
+        QuestStatusData const& questStatus = status->second;
+        add(questStatus.Status);
+        for (uint8 objective = 0; objective < QUEST_OBJECTIVES_COUNT; ++objective)
+            add(questStatus.CreatureOrGOCount[objective]);
+        for (uint8 objective = 0; objective < QUEST_ITEM_OBJECTIVES_COUNT; ++objective)
+            add(questStatus.ItemCount[objective]);
+    }
+
+    if (!info.progressInitialized)
+    {
+        info.progressInitialized = true;
+        info.progressSignature = signature;
+        info.lastProgressAt = now;
+        return false;
+    }
+
+    if (signature == info.progressSignature)
+        return false;
+
+    info.progressSignature = signature;
+    info.lastProgressAt = now;
+    info.migrationCooldownStartedAt = 0;
+    info.ResetLocalRouteFailures();
+    return true;
+}
+
+uint32 NewRpgBaseAction::GetPositionZoneId(WorldPosition const& position) const
+{
+    if (!sMapStore.LookupEntry(position.GetMapId()))
+    {
+        LOG_ERROR("playerbots", "[New RPG] {} rejected position with invalid map {}", bot->GetName(),
+                  position.GetMapId());
+        return 0;
+    }
+
+    return sMapMgr->GetZoneId(bot->GetPhaseMask(), position.GetMapId(), position.GetPositionX(),
+                              position.GetPositionY(), position.GetPositionZ());
+}
+
+bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint32& questId)
+{
+    uint32 currentZone = bot->GetZoneId();
+    for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+    {
+        uint32 candidateQuest = bot->GetQuestSlotQuestId(slot);
+        if (!candidateQuest || botAI->lowPriorityQuest.count(candidateQuest))
+            continue;
+
+        std::vector<POIInfo> poiInfo;
+        if (!GetQuestPOIPosAndObjectiveIdx(candidateQuest, poiInfo, true))
+            continue;
+
+        for (POIInfo const& poi : poiInfo)
+        {
+            uint32 poiZone = GetPositionZoneId(poi.pos);
+            if (poi.pos.GetMapId() == bot->GetMapId() && poiZone == currentZone)
+                continue;
+
+            destination = poi.pos;
+            questId = candidateQuest;
+            return true;
+        }
     }
     return false;
+}
+
+bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint32 resumeQuestId, bool breadcrumb,
+                                       std::vector<uint32> failedHubExclusions)
+{
+    struct Candidate
+    {
+        TravelMgr::ZoneHub hub;
+        ZoneTravelRoute route;
+    };
+
+    uint32 requestedZone = requestedDestination ? GetPositionZoneId(requestedDestination) : 0;
+    uint32 currentZone = bot->GetZoneId();
+    std::vector<TravelMgr::ZoneHub> hubs = sTravelMgr.GetFactionCompatibleLevelHubs(bot);
+    hubs.erase(std::remove_if(hubs.begin(), hubs.end(), [&](TravelMgr::ZoneHub const& hub)
+    {
+        if (std::find(failedHubExclusions.begin(), failedHubExclusions.end(), hub.zoneId) !=
+            failedHubExclusions.end())
+            return true;
+        if (breadcrumb)
+            return hub.zoneId != requestedZone;
+        return hub.zoneId == currentZone;
+    }), hubs.end());
+
+    WorldPosition current(bot);
+    std::sort(hubs.begin(), hubs.end(), [&](TravelMgr::ZoneHub const& left, TravelMgr::ZoneHub const& right)
+    {
+        return current.fDist(left.position) < current.fDist(right.position);
+    });
+    std::vector<Candidate> candidates;
+    for (TravelMgr::ZoneHub const& hub : hubs)
+    {
+        ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, hub.position);
+        if (!route.steps.empty())
+            candidates.push_back({hub, std::move(route)});
+        if (candidates.size() >= 6)
+            break;
+    }
+
+    if (candidates.empty() && breadcrumb && requestedDestination)
+    {
+        ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, requestedDestination);
+        if (!route.steps.empty())
+        {
+            TravelMgr::LevelBracket bracket{bot->GetLevel(), bot->GetLevel()};
+            candidates.push_back({{requestedDestination, requestedZone, bracket}, std::move(route)});
+        }
+    }
+
+    if (candidates.empty())
+        return false;
+
+    std::sort(candidates.begin(), candidates.end(), [](Candidate const& left, Candidate const& right)
+    {
+        return left.route.cost < right.route.cost;
+    });
+    size_t bestCount = std::min<size_t>(3, candidates.size());
+    size_t selected = (bot->GetGUID().GetCounter() + failedHubExclusions.size()) % bestCount;
+    Candidate& candidate = candidates[selected];
+
+    botAI->rpgInfo.ChangeToTravelZone(candidate.hub.position, candidate.hub.zoneId, resumeQuestId, breadcrumb,
+                                      std::move(candidate.route.steps), candidate.route.cost,
+                                      std::move(failedHubExclusions));
+    botAI->rpgStatistic.zoneTransitionsStarted++;
+    LOG_INFO("playerbots", "[New RPG] {} starting {} zone transition from zone {} to zone {} at level {}",
+             bot->GetName(), breadcrumb ? "breadcrumb" : "fallback", currentZone, candidate.hub.zoneId,
+             bot->GetLevel());
+    return true;
+}
+
+bool NewRpgBaseAction::RebuildZoneTravelRoute(NewRpgInfo::TravelZone& data)
+{
+    botAI->rpgStatistic.zoneReplans++;
+    ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, data.destination);
+    if (route.steps.empty())
+    {
+        LOG_INFO("playerbots", "[New RPG] {} could not rebuild route to zone {} (attempt {})", bot->GetName(),
+                 data.destinationZoneId, data.retryCount);
+        return false;
+    }
+
+    data.route = std::move(route.steps);
+    data.routeCost = route.cost;
+    data.routeStage = 0;
+    data.loggedRouteStage = UINT32_MAX;
+    data.lastMeaningfulPosition = WorldPosition(bot);
+    data.lastMeaningfulMovementAt = getMSTime();
+    botAI->rpgInfo.SetMoveFarTo(WorldPosition());
+    LOG_INFO("playerbots", "[New RPG] {} replanned route to zone {} (attempt {})", bot->GetName(),
+             data.destinationZoneId, data.retryCount);
+    return true;
+}
+
+bool NewRpgBaseAction::SelectAlternateZoneHub(NewRpgInfo::TravelZone& data)
+{
+    std::vector<uint32> exclusions = data.failedHubExclusions;
+    if (std::find(exclusions.begin(), exclusions.end(), data.destinationZoneId) == exclusions.end())
+        exclusions.push_back(data.destinationZoneId);
+
+    if (data.breadcrumb)
+        return false;
+    return StartZoneTravel(WorldPosition(), 0, false, std::move(exclusions));
+}
+
+void NewRpgBaseAction::FinishZoneTravelFailure()
+{
+    NewRpgInfo& info = botAI->rpgInfo;
+    uint32 destinationZone = 0;
+    if (auto* data = std::get_if<NewRpgInfo::TravelZone>(&info.data))
+        destinationZone = data->destinationZoneId;
+
+    botAI->rpgStatistic.zoneRouteFailures++;
+    info.migrationCooldownStartedAt = getMSTime();
+    LOG_WARN("playerbots", "[New RPG] {} has no legitimate route to zone {}; remaining local for {} seconds",
+             bot->GetName(), destinationZone, sPlayerbotAIConfig.zoneProgressionRetryCooldown);
+    info.ChangeToIdle();
 }
 
 bool NewRpgBaseAction::MoveWorldObjectTo(ObjectGuid guid, float distance)
@@ -622,60 +909,9 @@ bool NewRpgBaseAction::OrganizeQuestLog()
     if (dropped >= 8)
         return true;
 
-    // remove festival/class quests and quests in different zone
-    for (uint16 i = 0; i < MAX_QUEST_LOG_SIZE; ++i)
-    {
-        uint32 questId = bot->GetQuestSlotQuestId(i);
-        if (!questId)
-            continue;
-
-        const Quest* quest = sObjectMgr->GetQuestTemplate(questId);
-        const int64_t botZoneId = this->bot->GetZoneId();
-
-        if (quest->GetZoneOrSort() < 0 || (quest->GetZoneOrSort() > 0 && quest->GetZoneOrSort() != botZoneId))
-        {
-            LOG_DEBUG("playerbots", "[New RPG] {} drop quest {}", bot->GetName(), questId);
-            WorldPacket packet(CMSG_QUESTLOG_REMOVE_QUEST);
-            packet << (uint8)i;
-            WorldPackets::Quest::QuestLogRemoveQuest removeQuest(std::move(packet));
-            removeQuest.Read();
-            bot->GetSession()->HandleQuestLogRemoveQuest(removeQuest);
-            if (botAI->GetMaster())
-                botAI->TellMasterNoFacing(PlayerbotTextMgr::instance().GetBotTextOrDefault(
-                    "new_rpg_quest_dropped",
-                    "Quest dropped %quest",
-                    {{"%quest", ChatHelper::FormatQuest(quest)}}));
-            botAI->rpgStatistic.questDropped++;
-            dropped++;
-        }
-    }
-
-    if (dropped >= 8)
-        return true;
-
-    // clear quests log
-    for (uint16 i = 0; i < MAX_QUEST_LOG_SIZE; ++i)
-    {
-        uint32 questId = bot->GetQuestSlotQuestId(i);
-        if (!questId)
-            continue;
-
-        const Quest* quest = sObjectMgr->GetQuestTemplate(questId);
-        LOG_DEBUG("playerbots", "[New RPG] {} drop quest {}", bot->GetName(), questId);
-        WorldPacket packet(CMSG_QUESTLOG_REMOVE_QUEST);
-        packet << (uint8)i;
-        WorldPackets::Quest::QuestLogRemoveQuest removeQuest(std::move(packet));
-        removeQuest.Read();
-        bot->GetSession()->HandleQuestLogRemoveQuest(removeQuest);
-        if (botAI->GetMaster())
-            botAI->TellMasterNoFacing(PlayerbotTextMgr::instance().GetBotTextOrDefault(
-                "new_rpg_quest_dropped",
-                "Quest dropped %quest",
-                {{"%quest", ChatHelper::FormatQuest(quest)}}));
-        botAI->rpgStatistic.questDropped++;
-    }
-
-    return true;
+    // Preserve every otherwise-valid accepted quest, including breadcrumbs
+    // whose objectives or turn-ins live in another zone.
+    return dropped > 0;
 }
 
 bool NewRpgBaseAction::SearchQuestGiverAndAcceptOrReward()
@@ -831,47 +1067,45 @@ bool NewRpgBaseAction::GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector
 
     const QuestStatusData& q_status = bot->getQuestStatusMap().at(questId);
 
-    if (toComplete && q_status.Status == QUEST_STATUS_COMPLETE)
+    auto addPoi = [&](QuestPOI const& qPoi)
     {
-        for (const QuestPOI& qPoi : *poiVector)
+        if (qPoi.points.empty())
+            return;
+        if (!sMapStore.LookupEntry(qPoi.MapId))
         {
-            if (qPoi.MapId != bot->GetMapId())
-                continue;
-
-            // not the poi pos to reward quest
-            if (qPoi.ObjectiveIndex != -1)
-                continue;
-
-            if (qPoi.points.size() == 0)
-                continue;
-
-            float dx = 0, dy = 0;
-            std::vector<float> weights = GenerateRandomWeights(qPoi.points.size());
-            for (size_t i = 0; i < qPoi.points.size(); i++)
-            {
-                const QuestPOIPoint& point = qPoi.points[i];
-                dx += point.x * weights[i];
-                dy += point.y * weights[i];
-            }
-
-            if (bot->GetDistance2d(dx, dy) >= 1500.0f)
-                continue;
-
-            float dz = std::max(bot->GetMap()->GetHeight(dx, dy, MAX_HEIGHT), bot->GetMap()->GetWaterLevel(dx, dy));
-
-            if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
-                continue;
-
-            if (bot->GetZoneId() != bot->GetMap()->GetZoneId(bot->GetPhaseMask(), dx, dy, dz))
-                continue;
-
-            poiInfo.push_back({{dx, dy}, qPoi.ObjectiveIndex});
+            LOG_ERROR("playerbots", "[New RPG] {} rejected quest {} POI with invalid map {}", bot->GetName(),
+                      questId, qPoi.MapId);
+            return;
         }
 
-        if (poiInfo.empty())
-            return false;
+        float dx = 0.0f;
+        float dy = 0.0f;
+        std::vector<float> weights = GenerateRandomWeights(qPoi.points.size());
+        for (size_t i = 0; i < qPoi.points.size(); ++i)
+        {
+            dx += qPoi.points[i].x * weights[i];
+            dy += qPoi.points[i].y * weights[i];
+        }
 
-        return true;
+        Map* map = sMapMgr->CreateBaseMap(qPoi.MapId);
+        if (!map)
+            return;
+
+        float dz = std::max(map->GetHeight(dx, dy, MAX_HEIGHT), map->GetWaterLevel(dx, dy));
+        if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
+            return;
+
+        poiInfo.push_back({WorldPosition(qPoi.MapId, dx, dy, dz), qPoi.ObjectiveIndex});
+    };
+
+    if (toComplete && q_status.Status == QUEST_STATUS_COMPLETE)
+    {
+        for (QuestPOI const& qPoi : *poiVector)
+        {
+            if (qPoi.ObjectiveIndex == -1)
+                addPoi(qPoi);
+        }
+        return !poiInfo.empty();
     }
 
     if (q_status.Status != QUEST_STATUS_INCOMPLETE)
@@ -899,11 +1133,8 @@ bool NewRpgBaseAction::GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector
     }
 
     // Get POIs to go
-    for (const QuestPOI& qPoi : *poiVector)
+    for (QuestPOI const& qPoi : *poiVector)
     {
-        if (qPoi.MapId != bot->GetMapId())
-            continue;
-
         bool inComplete = false;
         for (uint32 objective : incompleteObjectiveIdx)
         {
@@ -915,32 +1146,10 @@ bool NewRpgBaseAction::GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector
         }
         if (!inComplete)
             continue;
-        if (qPoi.points.size() == 0)
-            continue;
-        float dx = 0, dy = 0;
-        std::vector<float> weights = GenerateRandomWeights(qPoi.points.size());
-        for (size_t i = 0; i < qPoi.points.size(); i++)
-        {
-            const QuestPOIPoint& point = qPoi.points[i];
-            dx += point.x * weights[i];
-            dy += point.y * weights[i];
-        }
-
-        if (bot->GetDistance2d(dx, dy) >= 1500.0f)
-            continue;
-
-        float dz = std::max(bot->GetMap()->GetHeight(dx, dy, MAX_HEIGHT), bot->GetMap()->GetWaterLevel(dx, dy));
-
-        if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
-            continue;
-
-        if (bot->GetZoneId() != bot->GetMap()->GetZoneId(bot->GetPhaseMask(), dx, dy, dz))
-            continue;
-
-        poiInfo.push_back({{dx, dy}, qPoi.ObjectiveIndex});
+        addPoi(qPoi);
     }
 
-    if (poiInfo.size() == 0)
+    if (poiInfo.empty())
     {
         // LOG_DEBUG("playerbots", "[New rpg] {}: No available poi can be found for quest {}", bot->GetName(), questId);
         return false;
@@ -1001,9 +1210,14 @@ WorldPosition NewRpgBaseAction::SelectRandomGrindPos(Player* bot)
         uint32 idx = urand(0, lo_prepared_locs.size() - 1);
         dest = lo_prepared_locs[idx];
     }
-    LOG_DEBUG("playerbots", "[New RPG] Bot {} select random grind pos Map:{} X:{} Y:{} Z:{} ({}+{} available in {})",
-              bot->GetName(), dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(),
-              hi_prepared_locs.size(), lo_prepared_locs.size() - hi_prepared_locs.size(), locs.size());
+    if (dest.IsValid())
+        LOG_DEBUG("playerbots",
+                  "[New RPG] Bot {} select random grind pos Map:{} X:{} Y:{} Z:{} ({}+{} available in {})",
+                  bot->GetName(), dest.GetMapId(), dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(),
+                  hi_prepared_locs.size(), lo_prepared_locs.size() - hi_prepared_locs.size(), locs.size());
+    else
+        LOG_DEBUG("playerbots", "[New RPG] Bot {} has no valid nearby grind position ({} locations checked)",
+                  bot->GetName(), locs.size());
     return dest;
 }
 

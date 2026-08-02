@@ -21,6 +21,7 @@
 #include "PathGenerator.h"
 #include "Playerbots.h"
 #include "RaceMgr.h"
+#include "Transport.h"
 #include "TransportMgr.h"
 #include "VMapFactory.h"
 #include "VMapMgr2.h"
@@ -541,23 +542,19 @@ std::string const WorldPosition::getAreaName(bool fullName, bool zoneName)
     return areaName;
 }
 
-std::set<Transport*> WorldPosition::getTransports(uint32 /*entry*/)
+std::set<Transport*> WorldPosition::getTransports(uint32 entry)
 {
-    /*
-    if (!entry)
-        return getMap()->m_transports;
-    else
-    {
-    */
     std::set<Transport*> transports;
-    /*
-    for (auto transport : getMap()->m_transports)
-        if (transport->GetEntry() == entry)
-            transports.insert(transport);
+    Map* map = getMap();
+    if (!map)
+        return transports;
 
-    return transports;
-}
-*/
+    for (Transport* transport : map->GetAllTransports())
+    {
+        if (!entry || transport->GetEntry() == entry)
+            transports.insert(transport);
+    }
+
     return transports;
 }
 
@@ -4494,6 +4491,45 @@ const std::vector<WorldLocation> TravelMgr::GetTravelHubs(Player* bot)
                                                  ? allianceHubsPerLevelCache[bot->GetLevel()]
                                                  : hordeHubsPerLevelCache[bot->GetLevel()];
     return locs;
+}
+
+std::vector<TravelMgr::ZoneHub> TravelMgr::GetFactionCompatibleLevelHubs(Player const* bot) const
+{
+    std::vector<ZoneHub> result;
+    auto const& hubs = bot->GetTeamId() == TEAM_ALLIANCE ? allianceHubsPerLevelCache : hordeHubsPerLevelCache;
+    auto levelHubs = hubs.find(bot->GetLevel());
+    if (levelHubs == hubs.end())
+        return result;
+
+    std::set<std::tuple<uint32, int32, int32>> seen;
+    for (WorldLocation const& location : levelHubs->second)
+    {
+        WorldPosition position(location);
+        uint32 areaId = position.getAreaId();
+        AreaTableEntry const* area = sAreaTableStore.LookupEntry(areaId);
+        uint32 zoneId = area && area->zone ? area->zone : areaId;
+        auto bracket = zone2LevelBracket.find(zoneId);
+        if (bracket == zone2LevelBracket.end() || !bracket->second.InsideBracket(bot->GetLevel()))
+            continue;
+
+        auto key = std::make_tuple(zoneId, static_cast<int32>(position.GetPositionX() / 10.0f),
+                                   static_cast<int32>(position.GetPositionY() / 10.0f));
+        if (!seen.insert(key).second)
+            continue;
+
+        result.push_back({position, zoneId, bracket->second});
+    }
+    return result;
+}
+
+bool TravelMgr::GetZoneLevelBracket(uint32 zoneId, LevelBracket& bracket) const
+{
+    auto itr = zone2LevelBracket.find(zoneId);
+    if (itr == zone2LevelBracket.end())
+        return false;
+
+    bracket = itr->second;
+    return true;
 }
 
 std::vector<WorldLocation> TravelMgr::GetCityLocations(Player* bot)

@@ -409,10 +409,10 @@ public:
     }
     void clear() { fullPath.clear(); }
 
-    bool empty() { return fullPath.empty(); }
-    std::vector<PathNodePoint> getPath() { return fullPath; }
-    WorldPosition getFront() { return fullPath.front().point; }
-    WorldPosition getBack() { return fullPath.back().point; }
+    bool empty() const { return fullPath.empty(); }
+    std::vector<PathNodePoint> getPath() const { return fullPath; }
+    WorldPosition getFront() const { return fullPath.front().point; }
+    WorldPosition getBack() const { return fullPath.back().point; }
 
     std::vector<WorldPosition> getPointPath()
     {

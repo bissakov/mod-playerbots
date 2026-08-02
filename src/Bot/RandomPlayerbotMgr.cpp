@@ -533,7 +533,10 @@ void RandomPlayerbotMgr::AssignAccountTypes()
     {
         if (currentAssignments.find(accountId) == currentAssignments.end())
         {
-            PlayerbotsDatabase.Execute("INSERT INTO playerbots_account_type (account_id, account_type) VALUES ({}, 0) ON DUPLICATE KEY UPDATE account_type = account_type", accountId);
+            PlayerbotsDatabase.DirectExecute(
+                "INSERT INTO playerbots_account_type (account_id, account_type) VALUES ({}, 0) "
+                "ON DUPLICATE KEY UPDATE account_type = account_type",
+                accountId);
             currentAssignments[accountId] = 0;
         }
     }
@@ -576,7 +579,9 @@ void RandomPlayerbotMgr::AssignAccountTypes()
             uint32 accountId = allRandomBotAccounts[i];
             if (currentAssignments[accountId] == 0) // Unassigned
             {
-                PlayerbotsDatabase.Execute("UPDATE playerbots_account_type SET account_type = 1, assignment_date = NOW() WHERE account_id = {}", accountId);
+                PlayerbotsDatabase.DirectExecute(
+                    "UPDATE playerbots_account_type SET account_type = 1, assignment_date = NOW() WHERE account_id = {}",
+                    accountId);
                 currentAssignments[accountId] = 1;
                 assigned++;
             }
@@ -601,7 +606,9 @@ void RandomPlayerbotMgr::AssignAccountTypes()
             uint32 accountId = allRandomBotAccounts[idx];
             if (currentAssignments[accountId] == 0) // Unassigned
             {
-                PlayerbotsDatabase.Execute("UPDATE playerbots_account_type SET account_type = 2, assignment_date = NOW() WHERE account_id = {}", accountId);
+                PlayerbotsDatabase.DirectExecute(
+                    "UPDATE playerbots_account_type SET account_type = 2, assignment_date = NOW() WHERE account_id = {}",
+                    accountId);
                 currentAssignments[accountId] = 2;
                 assigned++;
             }
@@ -1377,12 +1384,13 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
             randomTime = urand(3, std::max(4, static_cast<int>(randomBotUpdateInterval * 0.4)));
             ScheduleRandomize(bot, randomTime);
         }
-        if (!GetEventValue(bot, "teleport"))
-        {
-            randomTime = urand(std::max(7, static_cast<int>(randomBotUpdateInterval * 0.7)),
-                               std::max(14, static_cast<int>(randomBotUpdateInterval * 1.4)));
-            ScheduleTeleport(bot, randomTime);
-        }
+        // Always require a fresh level-aware placement after login. A persisted teleport timer may
+        // still have hours left on it, during which a randomized bot would otherwise remain at its
+        // racial spawn point.
+        randomTime = urand(std::max(7, static_cast<int>(randomBotUpdateInterval * 0.7)),
+                           std::max(14, static_cast<int>(randomBotUpdateInterval * 1.4)));
+        ScheduleTeleport(bot, randomTime);
+        SetEventValue(bot, "initial_teleport", 1, sPlayerbotAIConfig.maxRandomBotInWorldTime);
 
         return true;
     }
@@ -1456,7 +1464,33 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
     if (bot->InBattlegroundQueue())
         return false;
 
-     uint32 botId = bot->GetGUID().GetCounter();
+    uint32 botId = bot->GetGUID().GetCounter();
+
+    // A newly logged-in randombot can acquire a quest or RPG travel target before its scheduled
+    // level-aware teleport expires. Do not let that target strand a randomized high-level bot at
+    // its racial spawn point indefinitely.
+    if (GetEventValue(botId, "initial_teleport") && !GetEventValue(botId, "teleport"))
+    {
+        // organic realms: wherever the bot last stood is the correct placement
+        if (sPlayerbotAIConfig.disableRandomLevels)
+        {
+            SetEventValue(botId, "initial_teleport", 0, 0);
+        }
+        else
+        {
+            Refresh(bot);
+            if (TryRandomTeleportForLevel(bot))
+            {
+                SetEventValue(botId, "initial_teleport", 0, 0);
+                ScheduleTeleport(botId);
+            }
+            else
+            {
+                ScheduleTeleport(botId, 30);
+            }
+            return true;
+        }
+    }
 
     // if death revive
     if (bot->isDead())
@@ -1550,9 +1584,13 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
         uint32 teleport = GetEventValue(botId, "teleport");
         if (!teleport)
         {
-            LOG_DEBUG("playerbots", "Bot #{} <{}>: teleport for level and refresh", botId, bot->GetName());
-            Refresh(bot);
-            RandomTeleportForLevel(bot);
+            // organic realms: no free refresh, no relocation — bots keep walking
+            if (!sPlayerbotAIConfig.disableRandomLevels)
+            {
+                LOG_DEBUG("playerbots", "Bot #{} <{}>: teleport for level and refresh", botId, bot->GetName());
+                Refresh(bot);
+                RandomTeleportForLevel(bot);
+            }
             uint32 time = urand(sPlayerbotAIConfig.minRandomBotTeleportInterval,
                                 sPlayerbotAIConfig.maxRandomBotTeleportInterval);
             ScheduleTeleport(botId, time);
@@ -1575,27 +1613,27 @@ void RandomPlayerbotMgr::Revive(Player* player)
     RandomTeleportGrindForLevel(player);
 }
 
-void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>& locs, bool hearth)
+bool RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>& locs, bool hearth)
 {
     // ignore when alrdy teleported or not in the world yet.
     if (bot->IsBeingTeleported() || !bot->IsInWorld())
-        return;
+        return false;
 
     // no teleport / movement update when rooted.
     if (bot->IsRooted())
-        return;
+        return false;
 
     // ignore when in queue for battle grounds.
     if (bot->InBattlegroundQueue())
-        return;
+        return false;
 
     // ignore when in battle grounds or arena.
     if (bot->InBattleground() || bot->InArena())
-        return;
+        return false;
 
     // ignore when in group (e.g. world, dungeons, raids) and leader is not a player.
     if (bot->GetGroup() && !bot->GetGroup()->IsLeader(bot->GetGUID()))
-        return;
+        return false;
 
     PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
     if (botAI)
@@ -1603,7 +1641,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>&
         // ignore when in when taxi with boat/zeppelin and has players nearby
         if (bot->HasUnitMovementFlag(MOVEMENTFLAG_ONTRANSPORT) && bot->HasUnitState(UNIT_STATE_IGNORE_PATHFINDING) &&
             botAI->HasPlayerNearby())
-            return;
+            return false;
     }
 
     // if (sPlayerbotAIConfig.randomBotRpgChance < 0)
@@ -1612,7 +1650,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>&
     if (locs.empty())
     {
         LOG_DEBUG("playerbots", "Cannot teleport bot {} - no locations available", bot->GetName().c_str());
-        return;
+        return false;
     }
 
     std::vector<WorldPosition> tlocs;
@@ -1631,7 +1669,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>&
     if (tlocs.empty())
     {
         LOG_DEBUG("playerbots", "Cannot teleport bot {} - all locations removed by filter", bot->GetName().c_str());
-        return;
+        return false;
     }
 
     PerfMonitorOperation* pmo = sPerfMonitor.start(PERF_MON_RNDBOT, "RandomTeleportByLocations");
@@ -1709,7 +1747,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>&
         if (pmo)
             pmo->finish();
 
-        return;
+        return true;
     }
 
     if (pmo)
@@ -1717,6 +1755,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation>&
 
     // LOG_ERROR("playerbots", "Cannot teleport bot {} - no locations available ({} locations)", bot->GetName().c_str(),
     //           tlocs.size());
+    return false;
 }
 
 void RandomPlayerbotMgr::PrepareAddclassCache()
@@ -1767,28 +1806,42 @@ void RandomPlayerbotMgr::Init()
 
 void RandomPlayerbotMgr::RandomTeleportForLevel(Player* bot)
 {
+    TryRandomTeleportForLevel(bot);
+}
+
+bool RandomPlayerbotMgr::TryRandomTeleportForLevel(Player* bot)
+{
+    // organic realms: bots travel on foot only
+    if (sPlayerbotAIConfig.disableRandomLevels)
+        return false;
+
     if (bot->InBattleground())
-        return;
+        return false;
 
     if (bot->GetLevel() >= 10 && urand(0, 100) < sPlayerbotAIConfig.probTeleToBankers * 100)
     {
         std::vector<WorldLocation> locs = sTravelMgr.GetCityLocations(bot);
         if (!locs.empty())
         {
-            RandomTeleport(bot, locs, true);
-            return;
+            if (RandomTeleport(bot, locs, true))
+                return true;
         }
     }
     std::vector<WorldLocation> locs = sTravelMgr.GetTeleportLocations(bot);
     if (!locs.empty())
     {
-        RandomTeleport(bot, locs, false);
-        return;
+        return RandomTeleport(bot, locs, false);
     }
+
+    return false;
 }
 
 void RandomPlayerbotMgr::RandomTeleportGrindForLevel(Player* bot)
 {
+    // organic realms: revive in place, no relocation to grind spots
+    if (sPlayerbotAIConfig.disableRandomLevels)
+        return;
+
     if (bot->InBattleground())
         return;
 
@@ -1840,6 +1893,11 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot)
 
 void RandomPlayerbotMgr::Randomize(Player* bot)
 {
+    // organic realms keep only what bots earn by playing — never re-roll their
+    // level, quests, inventory, money, or position
+    if (sPlayerbotAIConfig.disableRandomLevels)
+        return;
+
     if (bot->InBattleground())
         return;
 
@@ -2882,14 +2940,21 @@ void RandomPlayerbotMgr::PrintStats()
         LOG_INFO("playerbots", "Bots rpg status:");
         LOG_INFO("playerbots",
                  "    Idle: {}, Rest: {}, GoGrind: {}, GoCamp: {}, MoveRandom: {}, MoveNpc: {}, DoQuest: {}, "
-                 "TravelFlight: {}, OutdoorPvP: {}",
+                 "TravelFlight: {}, TravelZone: {}, OutdoorPvP: {}",
                  rpgStatusCount[RPG_IDLE], rpgStatusCount[RPG_REST], rpgStatusCount[RPG_GO_GRIND],
                  rpgStatusCount[RPG_GO_CAMP], rpgStatusCount[RPG_WANDER_RANDOM], rpgStatusCount[RPG_WANDER_NPC],
-                 rpgStatusCount[RPG_DO_QUEST], rpgStatusCount[RPG_TRAVEL_FLIGHT], rpgStatusCount[RPG_OUTDOOR_PVP]);
+                 rpgStatusCount[RPG_DO_QUEST], rpgStatusCount[RPG_TRAVEL_FLIGHT], rpgStatusCount[RPG_TRAVEL_ZONE],
+                 rpgStatusCount[RPG_OUTDOOR_PVP]);
 
         LOG_INFO("playerbots", "Bots total quests:");
         LOG_INFO("playerbots", "    Accepted: {}, Rewarded: {}, Dropped: {}", rpgStasticTotal.questAccepted,
                  rpgStasticTotal.questRewarded, rpgStasticTotal.questDropped);
+        LOG_INFO("playerbots",
+                 "Bots total zone progression: started {}, arrived {}, replanned {}, terminal route failures {}",
+                 rpgStasticTotal.zoneTransitionsStarted, rpgStasticTotal.zoneArrivals,
+                 rpgStasticTotal.zoneReplans, rpgStasticTotal.zoneRouteFailures);
+        LOG_INFO("playerbots", "Bots total player unstuck recoveries: nudges {}, hearthstones {}",
+                 rpgStasticTotal.playerUnstuckNudges, rpgStasticTotal.playerUnstuckHearths);
     }
 
     LOG_INFO("playerbots", "Bots engine:", dead);
@@ -3026,6 +3091,10 @@ void RandomPlayerbotMgr::ChangeStrategyOnce(Player* player)
 
 void RandomPlayerbotMgr::RandomTeleportForRpg(Player* bot)
 {
+    // organic realms: bots travel on foot only
+    if (sPlayerbotAIConfig.disableRandomLevels)
+        return;
+
     uint32 race = bot->getRace();
     uint32 level = bot->GetLevel();
     LOG_DEBUG("playerbots", "Random teleporting bot {} for RPG ({} locations available)", bot->GetName().c_str(),

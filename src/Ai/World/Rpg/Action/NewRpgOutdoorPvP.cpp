@@ -71,7 +71,7 @@ bool NewRpgOutdoorPvpAction::Execute(Event)
 
     float radius = objectiveGO->GetGOInfo()->capturePoint.radius / 2.0f;
     if (!objectiveGO->IsWithinDistInMap(bot, radius))
-        return MoveFarTo(WorldPosition(objectiveGO));
+        return MoveFarTo(WorldPosition(objectiveGO)) != MoveFarOutcome::RouteFailed;
 
     return PatrolCapturePoint(objectiveGO, radius);
 }

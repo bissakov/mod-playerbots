@@ -11,6 +11,25 @@
 
 using NewRpgStatusTransitionProb = std::vector<std::vector<int>>;
 
+enum class ZoneTravelMethod : uint8
+{
+    Walk,
+    Transport,
+    KnownTaxi,
+    AreaTriggerPortal,
+    KnownSpell,
+    OwnedItem
+};
+
+struct ZoneTravelStep
+{
+    ZoneTravelMethod method{ZoneTravelMethod::Walk};
+    WorldPosition from{};
+    WorldPosition to{};
+    uint32 objectId{0};
+    ObjectGuid itemGuid{};
+};
+
 struct NewRpgInfo
 {
     NewRpgInfo() : data(Idle{}) {}
@@ -64,6 +83,22 @@ struct NewRpgInfo
     {
         ObjectGuid::LowType capturePointSpawnId{0};
     };
+    // RPG_TRAVEL_ZONE
+    struct TravelZone
+    {
+        WorldPosition destination{};
+        uint32 destinationZoneId{0};
+        uint32 resumeQuestId{0};
+        uint32 routeStage{0};
+        uint32 loggedRouteStage{UINT32_MAX};
+        uint32 retryCount{0};
+        std::vector<uint32> failedHubExclusions;
+        std::vector<ZoneTravelStep> route;
+        float routeCost{0.0f};
+        WorldPosition lastMeaningfulPosition{};
+        uint32 lastMeaningfulMovementAt{0};
+        bool breadcrumb{false};
+    };
     struct Idle
     {
     };
@@ -75,7 +110,17 @@ struct NewRpgInfo
     uint32 stuckTs{0};
     uint32 stuckAttempts{0};
     WorldPosition moveFarPos;
+    WorldPosition localRouteFailureAnchor;
+    uint32 consecutiveLocalRouteFailures{0};
+    uint32 lastPlayerUnstuckAt{0};
     // END MOVE_FAR
+
+    // In-memory only. A fresh PlayerbotAI instance recalculates these after login.
+    uint64 progressSignature{0};
+    uint32 lastProgressCheckAt{0};
+    uint32 lastProgressAt{0};
+    uint32 migrationCooldownStartedAt{0};
+    bool progressInitialized{false};
 
     using RpgData = std::variant<
         Idle,
@@ -86,7 +131,8 @@ struct NewRpgInfo
         DoQuest,
         Rest,
         TravelFlight,
-        OutdoorPvP
+        OutdoorPvP,
+        TravelZone
     >;
     RpgData data;
 
@@ -98,12 +144,16 @@ struct NewRpgInfo
     void ChangeToWanderRandom();
     void ChangeToDoQuest(uint32 questId, const Quest* quest);
     void ChangeToTravelFlight(uint32 flightMasterEntry, WorldPosition flightMasterPos, std::vector<uint32> path);
+    void ChangeToTravelZone(WorldPosition destination, uint32 destinationZoneId, uint32 resumeQuestId,
+                            bool breadcrumb, std::vector<ZoneTravelStep> route = {}, float routeCost = 0.0f,
+                            std::vector<uint32> failedHubExclusions = {});
     void ChangeToOutdoorPvp(ObjectGuid::LowType capturePointSpawnId = 0);
     void ChangeToRest();
     void ChangeToIdle();
     bool CanChangeTo(NewRpgStatus status);
     void Reset();
     void SetMoveFarTo(WorldPosition pos);
+    void ResetLocalRouteFailures();
     std::string ToString();
 };
 
@@ -114,6 +164,12 @@ struct NewRpgStatistic
     uint32 questAbandoned{0};
     uint32 questRewarded{0};
     uint32 questDropped{0};
+    uint32 zoneTransitionsStarted{0};
+    uint32 zoneArrivals{0};
+    uint32 zoneReplans{0};
+    uint32 zoneRouteFailures{0};
+    uint32 playerUnstuckNudges{0};
+    uint32 playerUnstuckHearths{0};
     NewRpgStatistic operator+(const NewRpgStatistic& other) const
     {
         NewRpgStatistic result;
@@ -122,6 +178,12 @@ struct NewRpgStatistic
         result.questAbandoned = this->questAbandoned + other.questAbandoned;
         result.questRewarded = this->questRewarded + other.questRewarded;
         result.questDropped = this->questDropped + other.questDropped;
+        result.zoneTransitionsStarted = this->zoneTransitionsStarted + other.zoneTransitionsStarted;
+        result.zoneArrivals = this->zoneArrivals + other.zoneArrivals;
+        result.zoneReplans = this->zoneReplans + other.zoneReplans;
+        result.zoneRouteFailures = this->zoneRouteFailures + other.zoneRouteFailures;
+        result.playerUnstuckNudges = this->playerUnstuckNudges + other.playerUnstuckNudges;
+        result.playerUnstuckHearths = this->playerUnstuckHearths + other.playerUnstuckHearths;
         return result;
     }
     NewRpgStatistic& operator+=(const NewRpgStatistic& other)
@@ -131,6 +193,12 @@ struct NewRpgStatistic
         this->questAbandoned += other.questAbandoned;
         this->questRewarded += other.questRewarded;
         this->questDropped += other.questDropped;
+        this->zoneTransitionsStarted += other.zoneTransitionsStarted;
+        this->zoneArrivals += other.zoneArrivals;
+        this->zoneReplans += other.zoneReplans;
+        this->zoneRouteFailures += other.zoneRouteFailures;
+        this->playerUnstuckNudges += other.playerUnstuckNudges;
+        this->playerUnstuckHearths += other.playerUnstuckHearths;
         return *this;
     }
 };

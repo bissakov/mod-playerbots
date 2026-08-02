@@ -104,4 +104,11 @@ public:
     bool Execute(Event event) override;
 };
 
+class NewRpgTravelZoneAction : public NewRpgBaseAction
+{
+public:
+    NewRpgTravelZoneAction(PlayerbotAI* botAI) : NewRpgBaseAction(botAI, "new rpg travel zone") {}
+    bool Execute(Event event) override;
+};
+
 #endif

@@ -48,6 +48,24 @@ void NewRpgInfo::ChangeToTravelFlight(uint32 flightMasterEntry, WorldPosition fl
     data = flight;
 }
 
+void NewRpgInfo::ChangeToTravelZone(WorldPosition destination, uint32 destinationZoneId, uint32 resumeQuestId,
+                                    bool breadcrumb, std::vector<ZoneTravelStep> route, float routeCost,
+                                    std::vector<uint32> failedHubExclusions)
+{
+    startT = getMSTime();
+    TravelZone travel;
+    travel.destination = destination;
+    travel.destinationZoneId = destinationZoneId;
+    travel.resumeQuestId = resumeQuestId;
+    travel.failedHubExclusions = std::move(failedHubExclusions);
+    travel.route = std::move(route);
+    travel.routeCost = routeCost;
+    travel.lastMeaningfulPosition = WorldPosition();
+    travel.lastMeaningfulMovementAt = startT;
+    travel.breadcrumb = breadcrumb;
+    data = std::move(travel);
+}
+
 void NewRpgInfo::ChangeToOutdoorPvp(ObjectGuid::LowType capturePointSpawnId)
 {
     startT = getMSTime();
@@ -87,6 +105,12 @@ void NewRpgInfo::SetMoveFarTo(WorldPosition pos)
     moveFarPos = pos;
 }
 
+void NewRpgInfo::ResetLocalRouteFailures()
+{
+    localRouteFailureAnchor = WorldPosition();
+    consecutiveLocalRouteFailures = 0;
+}
+
 NewRpgStatus NewRpgInfo::GetStatus()
 {
     return std::visit([](auto&& arg) -> NewRpgStatus {
@@ -100,6 +124,7 @@ NewRpgStatus NewRpgInfo::GetStatus()
         if constexpr (std::is_same_v<T, DoQuest>) return RPG_DO_QUEST;
         if constexpr (std::is_same_v<T, TravelFlight>) return RPG_TRAVEL_FLIGHT;
         if constexpr (std::is_same_v<T, OutdoorPvP>) return RPG_OUTDOOR_PVP;
+        if constexpr (std::is_same_v<T, TravelZone>) return RPG_TRAVEL_ZONE;
         return RPG_IDLE;
     }, data);
 }
@@ -170,6 +195,16 @@ std::string NewRpgInfo::ToString()
                 out << "\nNo capture point assigned.";
             else
                 out << "\ncapturePointSpawnId: " << arg.capturePointSpawnId;
+        }
+        else if constexpr (std::is_same_v<T, TravelZone>)
+        {
+            out << "TRAVEL_ZONE";
+            out << "\ndestinationZone: " << arg.destinationZoneId;
+            out << "\ndestination: " << arg.destination.GetMapId() << " " << arg.destination.GetPositionX() << " "
+                << arg.destination.GetPositionY() << " " << arg.destination.GetPositionZ();
+            out << "\nrouteStage: " << arg.routeStage << "/" << arg.route.size();
+            out << "\nretryCount: " << arg.retryCount;
+            out << "\nbreadcrumbQuest: " << arg.resumeQuestId;
         }
         else
             out << "UNKNOWN";
