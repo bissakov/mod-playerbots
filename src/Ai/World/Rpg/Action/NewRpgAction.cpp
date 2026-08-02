@@ -26,10 +26,12 @@
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
+#include "Playerbots.h"
 #include "QuestDef.h"
 #include "Random.h"
 #include "SharedDefines.h"
 #include "Timer.h"
+#include "Trainer.h"
 #include "TravelMgr.h"
 #include "ZoneTravelPolicy.h"
 
@@ -61,6 +63,64 @@ bool StartRpgDoQuestAction::Execute(Event event)
     }
     bot->Whisper("Invalid quest " + text, LANG_UNIVERSAL, owner);
     return false;
+}
+
+bool NewRpgStatusUpdateAction::NeedsErrandAt(ObjectGuid npcGuid)
+{
+    Unit* unit = botAI->GetUnit(npcGuid);
+    Creature* npc = unit ? unit->ToCreature() : nullptr;
+    if (!npc)
+        return false;
+
+    bool needsVendor = AI_VALUE(bool, "should sell") && AI_VALUE(bool, "can sell");
+    if (needsVendor && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
+        return true;
+
+    if (AI_VALUE(bool, "should repair") && AI_VALUE(bool, "can repair") &&
+        npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR))
+        return true;
+
+    if (AI_VALUE(bool, "should buy bags") && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
+    {
+        uint32 smallestBagSize = UINT32_MAX;
+        for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+        {
+            Bag const* equippedBag = static_cast<Bag const*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+            smallestBagSize = std::min(smallestBagSize, equippedBag ? equippedBag->GetBagSize() : 0u);
+        }
+
+        if (VendorItemData const* items = npc->GetVendorItems())
+        {
+            for (VendorItem const* item : items->m_items)
+            {
+                ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item->item);
+                if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER &&
+                    itemTemplate->SubClass == ITEM_SUBCLASS_CONTAINER && itemTemplate->ContainerSlots > smallestBagSize)
+                    return true;
+            }
+        }
+    }
+
+    if (AI_VALUE(bool, "can train") && AI_VALUE(uint32, "train cost") > 0 &&
+        npc->HasNpcFlag(UNIT_NPC_FLAG_TRAINER_CLASS))
+    {
+        Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(npc->GetEntry());
+        if (trainer && trainer->GetTrainerType() == Trainer::Type::Class && trainer->IsTrainerValidForPlayer(bot))
+            return true;
+    }
+
+    return AI_VALUE(bool, "should bank") && npc->HasNpcFlag(UNIT_NPC_FLAG_BANKER);
+}
+
+ObjectGuid NewRpgStatusUpdateAction::FindErrandNpc()
+{
+    for (ObjectGuid const& guid : AI_VALUE(GuidVector, "possible new rpg targets"))
+    {
+        if (NeedsErrandAt(guid))
+            return guid;
+    }
+
+    return ObjectGuid::Empty;
 }
 
 bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
@@ -137,6 +197,16 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
     }
 
     status = info.GetStatus();
+    if (status != RPG_DO_ERRAND && status != RPG_TRAVEL_FLIGHT && status != RPG_TRAVEL_ZONE)
+    {
+        ObjectGuid errandNpc = FindErrandNpc();
+        if (errandNpc)
+        {
+            info.ChangeToDoErrand(errandNpc);
+            return true;
+        }
+    }
+
     switch (status)
     {
         case RPG_IDLE:
@@ -182,6 +252,16 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
         case RPG_WANDER_NPC:
         {
             if (info.HasStatusPersisted(statusWanderNpcDuration))
+            {
+                info.ChangeToIdle();
+                return true;
+            }
+            break;
+        }
+        case RPG_DO_ERRAND:
+        {
+            auto& data = std::get<NewRpgInfo::DoErrand>(info.data);
+            if (!NeedsErrandAt(data.npc) || info.HasStatusPersisted(statusDoErrandDuration))
             {
                 info.ChangeToIdle();
                 return true;
@@ -346,6 +426,35 @@ bool NewRpgWanderNpcAction::Execute(Event /*event*/)
     }
 
     return true;
+}
+
+bool NewRpgDoErrandAction::Execute(Event /*event*/)
+{
+    NewRpgInfo& info = botAI->rpgInfo;
+    auto* data = std::get_if<NewRpgInfo::DoErrand>(&info.data);
+    if (!data || !data->npc)
+        return false;
+
+    WorldObject* npc = ObjectAccessor::GetWorldObject(*bot, data->npc);
+    if (!npc)
+    {
+        info.ChangeToIdle();
+        return true;
+    }
+
+    if (IsWithinInteractionDist(npc))
+    {
+        if (!data->lastReach)
+            data->lastReach = getMSTime();
+
+        // The chores strategy has higher relevance and performs the actual interaction.
+        return false;
+    }
+
+    if (MoveWorldObjectTo(data->npc))
+        return true;
+
+    return MoveRandomNear(15.0f);
 }
 
 bool NewRpgDoQuestAction::Execute(Event /*event*/)

@@ -57,6 +57,12 @@ struct NewRpgInfo
         ObjectGuid npcOrGo{};
         uint32 lastReach{0};
     };
+    // RPG_DO_ERRAND
+    struct DoErrand
+    {
+        ObjectGuid npc{};
+        uint32 lastReach{0};
+    };
     // RPG_WANDER_RANDOM
     struct WanderRandom
     {
@@ -138,7 +144,8 @@ struct NewRpgInfo
         Rest,
         TravelFlight,
         OutdoorPvP,
-        TravelZone
+        TravelZone,
+        DoErrand
     >;
     RpgData data;
 
@@ -147,6 +154,7 @@ struct NewRpgInfo
     void ChangeToGoGrind(WorldPosition pos);
     void ChangeToGoCamp(WorldPosition pos);
     void ChangeToWanderNpc();
+    void ChangeToDoErrand(ObjectGuid npc);
     void ChangeToWanderRandom();
     void ChangeToDoQuest(uint32 questId, const Quest* quest);
     void ChangeToTravelFlight(uint32 flightMasterEntry, WorldPosition flightMasterPos, std::vector<uint32> path);

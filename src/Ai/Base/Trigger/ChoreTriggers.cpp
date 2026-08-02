@@ -18,6 +18,20 @@ bool ClassTrainerInRangeTrigger::IsActive()
     return AI_VALUE(bool, "can train") && AI_VALUE(ObjectGuid, "nearest class trainer");
 }
 
+bool RepairerInRangeTrigger::IsActive()
+{
+    if (!AI_VALUE(bool, "should repair") || !AI_VALUE(bool, "can repair"))
+        return false;
+
+    for (ObjectGuid const& guid : AI_VALUE(GuidVector, "possible new rpg targets"))
+    {
+        if (bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_REPAIR))
+            return true;
+    }
+
+    return false;
+}
+
 bool BankerInRangeTrigger::IsActive()
 {
     return AI_VALUE(bool, "should bank") && AI_VALUE(ObjectGuid, "nearest banker");

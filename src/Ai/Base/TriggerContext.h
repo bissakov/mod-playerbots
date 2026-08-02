@@ -175,6 +175,7 @@ public:
         creators["near rpg target"] = &TriggerContext::near_rpg_target;
         creators["vendor in range"] = &TriggerContext::vendor_in_range;
         creators["class trainer in range"] = &TriggerContext::class_trainer_in_range;
+        creators["repairer in range"] = &TriggerContext::repairer_in_range;
         creators["banker in range"] = &TriggerContext::banker_in_range;
         creators["should buy bags at vendor"] = &TriggerContext::should_buy_bags_at_vendor;
         creators["no travel target"] = &TriggerContext::no_travel_target;
@@ -242,6 +243,7 @@ public:
         creators["go camp status"] = &TriggerContext::go_camp_status;
         creators["wander random status"] = &TriggerContext::wander_random_status;
         creators["wander npc status"] = &TriggerContext::wander_npc_status;
+        creators["do errand status"] = &TriggerContext::do_errand_status;
         creators["do quest status"] = &TriggerContext::do_quest_status;
         creators["travel flight status"] = &TriggerContext::travel_flight_status;
         creators["travel zone status"] = &TriggerContext::travel_zone_status;
@@ -455,12 +457,14 @@ private:
     static Trigger* rpg_duel(PlayerbotAI* botAI) { return new RpgDuelTrigger(botAI); }
     static Trigger* vendor_in_range(PlayerbotAI* botAI) { return new VendorInRangeTrigger(botAI); }
     static Trigger* class_trainer_in_range(PlayerbotAI* botAI) { return new ClassTrainerInRangeTrigger(botAI); }
+    static Trigger* repairer_in_range(PlayerbotAI* botAI) { return new RepairerInRangeTrigger(botAI); }
     static Trigger* banker_in_range(PlayerbotAI* botAI) { return new BankerInRangeTrigger(botAI); }
     static Trigger* should_buy_bags_at_vendor(PlayerbotAI* botAI) { return new ShouldBuyBagsAtVendorTrigger(botAI); }
     static Trigger* go_grind_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_GO_GRIND); }
     static Trigger* go_camp_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_GO_CAMP); }
     static Trigger* wander_random_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_WANDER_RANDOM); }
     static Trigger* wander_npc_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_WANDER_NPC); }
+    static Trigger* do_errand_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_DO_ERRAND); }
     static Trigger* do_quest_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_DO_QUEST); }
     static Trigger* travel_flight_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_TRAVEL_FLIGHT); }
     static Trigger* travel_zone_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_TRAVEL_ZONE); }

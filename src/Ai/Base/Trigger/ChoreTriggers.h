@@ -27,6 +27,14 @@ public:
     bool IsActive() override;
 };
 
+class RepairerInRangeTrigger : public Trigger
+{
+public:
+    RepairerInRangeTrigger(PlayerbotAI* botAI) : Trigger(botAI, "repairer in range", 2) {}
+
+    bool IsActive() override;
+};
+
 class BankerInRangeTrigger : public Trigger
 {
 public:

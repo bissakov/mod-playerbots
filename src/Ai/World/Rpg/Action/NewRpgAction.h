@@ -52,12 +52,16 @@ public:
     bool Execute(Event event) override;
 
 protected:
+    ObjectGuid FindErrandNpc();
+    bool NeedsErrandAt(ObjectGuid npcGuid);
+
     // static NewRpgStatusTransitionProb transitionMat;
     const int32 statusWanderNpcDuration = 5 * MINUTE  * IN_MILLISECONDS ;
     const int32 statusWanderRandomDuration = 5 * MINUTE  * IN_MILLISECONDS ;
     const int32 statusRestDuration = 30 * IN_MILLISECONDS ;
     const int32 statusDoQuestDuration = 30 * MINUTE  * IN_MILLISECONDS ;
     const int32 statusOutDoorPvPDuration = HOUR * IN_MILLISECONDS ;
+    const int32 statusDoErrandDuration = 5 * MINUTE * IN_MILLISECONDS;
 };
 
 class NewRpgGoGrindAction : public NewRpgBaseAction
@@ -88,6 +92,13 @@ public:
     bool Execute(Event event) override;
 
     const uint32 npcStayTime = 8 * 1000;
+};
+
+class NewRpgDoErrandAction : public NewRpgBaseAction
+{
+public:
+    NewRpgDoErrandAction(PlayerbotAI* botAI) : NewRpgBaseAction(botAI, "new rpg do errand") {}
+    bool Execute(Event event) override;
 };
 
 class NewRpgDoQuestAction : public NewRpgBaseAction

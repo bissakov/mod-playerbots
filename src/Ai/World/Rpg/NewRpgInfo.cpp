@@ -28,6 +28,12 @@ void NewRpgInfo::ChangeToWanderNpc()
     data = WanderNpc{};
 }
 
+void NewRpgInfo::ChangeToDoErrand(ObjectGuid npc)
+{
+    startT = getMSTime();
+    data = DoErrand{npc};
+}
+
 void NewRpgInfo::ChangeToWanderRandom()
 {
     startT = getMSTime();
@@ -131,6 +137,7 @@ NewRpgStatus NewRpgInfo::GetStatus()
         if constexpr (std::is_same_v<T, TravelFlight>) return RPG_TRAVEL_FLIGHT;
         if constexpr (std::is_same_v<T, OutdoorPvP>) return RPG_OUTDOOR_PVP;
         if constexpr (std::is_same_v<T, TravelZone>) return RPG_TRAVEL_ZONE;
+        if constexpr (std::is_same_v<T, DoErrand>) return RPG_DO_ERRAND;
         return RPG_IDLE;
     }, data);
 }
@@ -167,6 +174,13 @@ std::string NewRpgInfo::ToString()
         {
             out << "WANDER_RANDOM";
             out << "\nlastWanderRandom: " << startT;
+        }
+        else if constexpr (std::is_same_v<T, DoErrand>)
+        {
+            out << "DO_ERRAND";
+            out << "\nnpc: " << arg.npc.ToString();
+            out << "\nlastErrand: " << startT;
+            out << "\nlastReachNpc: " << arg.lastReach;
         }
         else if constexpr (std::is_same_v<T, Idle>)
         {
