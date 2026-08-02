@@ -50,6 +50,38 @@ bool CanTrainValue::Calculate()
     return AI_VALUE2(uint32, "free money for", (uint32)NeedMoneyFor::spells) > 0;
 }
 
+bool ShouldBankValue::Calculate()
+{
+    // At desperate bag pressure these items have to remain available to the eviction path instead of making
+    // banking a reason to hold on to them indefinitely.
+    if (AI_VALUE(uint8, "bag space") >= 90)
+        return false;
+
+    for (ItemUsage usage : {ITEM_USAGE_KEEP, ITEM_USAGE_AH, ITEM_USAGE_SKILL})
+    {
+        if (AI_VALUE2(uint32, "item count", "usage " + std::to_string(usage)) > 0)
+            return true;
+    }
+
+    return false;
+}
+
+bool ShouldBuyBagsValue::Calculate()
+{
+    if (AI_VALUE2(uint32, "free money for", (uint32)NeedMoneyFor::gear) == 0)
+        return false;
+
+    constexpr uint32 desiredBagSize = 14;
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag const* equippedBag = static_cast<Bag const*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        if (!equippedBag || equippedBag->GetBagSize() < desiredBagSize)
+            return true;
+    }
+
+    return false;
+}
+
 bool CanFightEqualValue::Calculate() { return AI_VALUE(uint8, "durability") > 20; }
 
 bool CanFightEliteValue::Calculate()

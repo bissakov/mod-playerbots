@@ -67,6 +67,22 @@ public:
     bool Calculate() override;
 };
 
+class ShouldBankValue : public BoolCalculatedValue
+{
+public:
+    ShouldBankValue(PlayerbotAI* botAI) : BoolCalculatedValue(botAI, "should bank", 2 * 2000) {}
+
+    bool Calculate() override;
+};
+
+class ShouldBuyBagsValue : public BoolCalculatedValue
+{
+public:
+    ShouldBuyBagsValue(PlayerbotAI* botAI) : BoolCalculatedValue(botAI, "should buy bags", 2 * 2000) {}
+
+    bool Calculate() override;
+};
+
 class CanFightEqualValue : public BoolCalculatedValue
 {
 public:

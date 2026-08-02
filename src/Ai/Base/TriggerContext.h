@@ -7,6 +7,7 @@
 #ifndef PLAYERBOTS_TRIGGERCONTEXT_H
 #define PLAYERBOTS_TRIGGERCONTEXT_H
 
+#include "ChoreTriggers.h"
 #include "CureTriggers.h"
 #include "FishingTriggers.h"
 #include "GenericTriggers.h"
@@ -172,6 +173,10 @@ public:
         creators["has rpg target"] = &TriggerContext::has_rpg_target;
         creators["far from rpg target"] = &TriggerContext::far_from_rpg_target;
         creators["near rpg target"] = &TriggerContext::near_rpg_target;
+        creators["vendor in range"] = &TriggerContext::vendor_in_range;
+        creators["class trainer in range"] = &TriggerContext::class_trainer_in_range;
+        creators["banker in range"] = &TriggerContext::banker_in_range;
+        creators["should buy bags at vendor"] = &TriggerContext::should_buy_bags_at_vendor;
         creators["no travel target"] = &TriggerContext::no_travel_target;
         creators["far from travel target"] = &TriggerContext::far_from_travel_target;
         creators["no rti target"] = &TriggerContext::no_rti;
@@ -448,6 +453,10 @@ private:
     static Trigger* rpg_craft(PlayerbotAI* botAI) { return new RpgCraftTrigger(botAI); }
     static Trigger* rpg_trade_useful(PlayerbotAI* botAI) { return new RpgTradeUsefulTrigger(botAI); }
     static Trigger* rpg_duel(PlayerbotAI* botAI) { return new RpgDuelTrigger(botAI); }
+    static Trigger* vendor_in_range(PlayerbotAI* botAI) { return new VendorInRangeTrigger(botAI); }
+    static Trigger* class_trainer_in_range(PlayerbotAI* botAI) { return new ClassTrainerInRangeTrigger(botAI); }
+    static Trigger* banker_in_range(PlayerbotAI* botAI) { return new BankerInRangeTrigger(botAI); }
+    static Trigger* should_buy_bags_at_vendor(PlayerbotAI* botAI) { return new ShouldBuyBagsAtVendorTrigger(botAI); }
     static Trigger* go_grind_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_GO_GRIND); }
     static Trigger* go_camp_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_GO_CAMP); }
     static Trigger* wander_random_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_WANDER_RANDOM); }

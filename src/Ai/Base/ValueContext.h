@@ -19,6 +19,7 @@
 #include "BudgetValues.h"
 #include "CcTargetValue.h"
 #include "ChatValue.h"
+#include "ChoreValues.h"
 #include "CollisionValue.h"
 #include "CraftValue.h"
 #include "CurrentCcTargetValue.h"
@@ -284,6 +285,11 @@ public:
         creators["should sell"] = &ValueContext::should_sell;
         creators["can sell"] = &ValueContext::can_sell;
         creators["can train"] = &ValueContext::can_train;
+        creators["should bank"] = &ValueContext::should_bank;
+        creators["should buy bags"] = &ValueContext::should_buy_bags;
+        creators["nearest vendor"] = &ValueContext::nearest_vendor;
+        creators["nearest class trainer"] = &ValueContext::nearest_class_trainer;
+        creators["nearest banker"] = &ValueContext::nearest_banker;
         creators["can fight equal"] = &ValueContext::can_fight_equal;
         creators["can fight elite"] = &ValueContext::can_fight_elite;
         creators["can fight boss"] = &ValueContext::can_fight_boss;
@@ -540,6 +546,11 @@ private:
     static UntypedValue* should_sell(PlayerbotAI* botAI) { return new ShouldSellValue(botAI); }
     static UntypedValue* can_sell(PlayerbotAI* botAI) { return new CanSellValue(botAI); }
     static UntypedValue* can_train(PlayerbotAI* botAI) { return new CanTrainValue(botAI); }
+    static UntypedValue* should_bank(PlayerbotAI* botAI) { return new ShouldBankValue(botAI); }
+    static UntypedValue* should_buy_bags(PlayerbotAI* botAI) { return new ShouldBuyBagsValue(botAI); }
+    static UntypedValue* nearest_vendor(PlayerbotAI* botAI) { return new NearestVendorValue(botAI); }
+    static UntypedValue* nearest_class_trainer(PlayerbotAI* botAI) { return new NearestClassTrainerValue(botAI); }
+    static UntypedValue* nearest_banker(PlayerbotAI* botAI) { return new NearestBankerValue(botAI); }
     static UntypedValue* can_fight_equal(PlayerbotAI* botAI) { return new CanFightEqualValue(botAI); }
     static UntypedValue* can_fight_elite(PlayerbotAI* botAI) { return new CanFightEliteValue(botAI); }
     static UntypedValue* can_fight_boss(PlayerbotAI* botAI) { return new CanFightBossValue(botAI); }
