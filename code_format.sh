@@ -1,18 +1,14 @@
-#!/bin/bash
-CLANG_FORMAT_PATH=$(which clang-format)
+#!/usr/bin/env bash
 
- if [ -z "$CLANG_FORMAT_PATH" ]; then
-    echo "clang-format not found."
+set -euo pipefail
+
+clang_format="${CLANG_FORMAT_BIN:-clang-format-18}"
+if ! command -v "$clang_format" >/dev/null; then
+    echo "$clang_format not found; set CLANG_FORMAT_BIN to use another binary." >&2
     exit 1
 fi
 
-PROJECT_ROOT=$(dirname "$0")
-
-cpp_files=$(find $PROJECT_ROOT -name '*.cpp' -or -name '*.h' )
-
-for file in $cpp_files; do
-    echo "Formatting $file"
-    $CLANG_FORMAT_PATH -i $file
-done
-
-echo "All .cpp or .h files have been formatted."
+root="$(cd "$(dirname "$0")" && pwd)"
+find "$root/src" -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \
+    -o -name '*.h' -o -name '*.hh' -o -name '*.hpp' -o -name '*.hxx' \) -print0 |
+    xargs -0 -r "$clang_format" -i
