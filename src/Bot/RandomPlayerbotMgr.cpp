@@ -2627,7 +2627,9 @@ void RandomPlayerbotMgr::OnBotLoginInternal(Player* const bot)
     }
 
     // Run guild recovery/assignment at login to handle empty guild tables after restart.
-    if (sPlayerbotAIConfig.randomBotGuildCount > 0)
+    // Organic bots must join or create guilds through normal in-world interactions;
+    // otherwise a fresh realm instantly fills every configured synthetic guild.
+    if (sPlayerbotAIConfig.randomBotGuildCount > 0 && !sPlayerbotAIConfig.organicProgression)
     {
         PlayerbotFactory factory(bot, bot->GetLevel());
         factory.InitGuild();
