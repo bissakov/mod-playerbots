@@ -2116,6 +2116,21 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
     if (!botAI)
         return;
 
+    // Refresh is a factory reset: it repairs for free, fills resources, creates
+    // supplies and grants money. Organic bots only use this path as a last-resort
+    // delayed resurrection; preserve every other part of their character state.
+    if (sPlayerbotAIConfig.organicProgression)
+    {
+        if (bot->isDead())
+        {
+            bot->ResurrectPlayer(0.5f);
+            bot->SpawnCorpseBones();
+            botAI->ResetStrategies(false);
+        }
+        botAI->Reset();
+        return;
+    }
+
     if (bot->isDead())
     {
         bot->ResurrectPlayer(1.0f);
@@ -2316,8 +2331,17 @@ CachedEvent* RandomPlayerbotMgr::FindEvent(uint32 bot, std::string const& event)
 
     CachedEvent& e = it->second;
 
+    // These values describe a character, not one login session. Expiring profession
+    // choices caused a new pair to be rolled every eight hours while the old skills
+    // remained, producing low-level bots with as many as six primary professions.
+    bool const persistentProfile = event == "specNo" || event == "specLink" || event == "firstSkill" ||
+                                   event == "secondSkill" || event == "professionRollType" ||
+                                   event == "alchemySpecialization" || event == "engineeringSpecialization" ||
+                                   event == "leatherSpecialization" || event == "tailorSpecialization" ||
+                                   event == "blacksmithSpecialization" || event == "blacksmithWeaponSpecialization";
+
     // remove expired events
-    if (e.validIn && (NowSeconds() - e.lastChangeTime) >= e.validIn && event != "specNo" && event != "specLink")
+    if (e.validIn && (NowSeconds() - e.lastChangeTime) >= e.validIn && !persistentProfile)
     {
         cache.events.erase(it);
         return nullptr;

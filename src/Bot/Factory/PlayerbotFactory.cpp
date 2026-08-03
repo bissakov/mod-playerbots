@@ -384,6 +384,11 @@ PlayerbotFactory::PlayerbotFactory(Player* bot, uint32 level, uint32 itemQuality
     }
 }
 
+bool PlayerbotFactory::IsOrganicRandomBot() const
+{
+    return sPlayerbotAIConfig.organicProgression && sRandomPlayerbotMgr.IsRandomBot(bot);
+}
+
 void PlayerbotFactory::Init()
 {
     if (sPlayerbotAIConfig.randomBotPreQuests)
@@ -622,13 +627,14 @@ void PlayerbotFactory::Randomize(bool incremental)
     LOG_DEBUG("playerbots", "Resetting player...");
     PerfMonitorOperation* pmo = sPerfMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Reset");
 
-    if (!sPlayerbotAIConfig.equipAndSpecPersistence ||
-        level < uint32(sPlayerbotAIConfig.equipAndSpecPersistenceLevel))
+    if (!IsOrganicRandomBot() &&
+        (!sPlayerbotAIConfig.equipAndSpecPersistence ||
+         level < uint32(sPlayerbotAIConfig.equipAndSpecPersistenceLevel)))
     {
         bot->resetTalents(true);
     }
 
-    if (!incremental)
+    if (!incremental && !IsOrganicRandomBot())
     {
         ClearSkills();
         ClearSpells();
@@ -639,9 +645,11 @@ void PlayerbotFactory::Randomize(bool incremental)
             ClearAllItems();
         }
     }
-    ClearInventory();
+    if (!IsOrganicRandomBot())
+        ClearInventory();
     bot->RemoveAllSpellCooldown();
-    UnbindInstance();
+    if (!IsOrganicRandomBot())
+        UnbindInstance();
 
     bot->GiveLevel(level);
     bot->InitStatsForLevel(true);
@@ -827,7 +835,7 @@ void PlayerbotFactory::Randomize(bool incremental)
 
     pmo = sPerfMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Guilds");
     // bot->SaveToDB(false, false);
-    if (sPlayerbotAIConfig.randomBotGuildCount > 0)
+    if (sPlayerbotAIConfig.randomBotGuildCount > 0 && !IsOrganicRandomBot())
     {
         LOG_DEBUG("playerbots", "Initializing guilds...");
         InitGuild();
@@ -836,7 +844,7 @@ void PlayerbotFactory::Randomize(bool incremental)
     if (pmo)
         pmo->finish();
 
-    if (bot->GetLevel() >= 70)
+    if (bot->GetLevel() >= 70 && !IsOrganicRandomBot())
     {
         pmo = sPerfMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Arenas");
         // LOG_INFO("playerbots", "Initializing arena teams...");
@@ -845,7 +853,7 @@ void PlayerbotFactory::Randomize(bool incremental)
             pmo->finish();
     }
 
-    if (!incremental)
+    if (!incremental && !IsOrganicRandomBot())
     {
         bot->RemovePet(nullptr, PET_SAVE_AS_CURRENT, true);
         bot->RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT, true);
@@ -917,6 +925,9 @@ void PlayerbotFactory::Refresh()
 
 void PlayerbotFactory::InitConsumables()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     uint8 specTab = AiFactory::GetPlayerSpecTab(bot);
     std::vector<std::pair<uint32, uint32>> items;
 
@@ -1283,6 +1294,9 @@ void PlayerbotFactory::InitPetTalents()
 
 void PlayerbotFactory::InitPet()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     Pet* pet = bot->GetPet();
 
     if (!pet && bot->GetPetStable() && bot->GetPetStable()->CurrentPet)
@@ -2104,6 +2118,9 @@ void Shuffle(std::vector<uint32>& items)
 
 void PlayerbotFactory::InitEquipment(bool incremental, bool second_chance)
 {
+    if (IsOrganicRandomBot())
+        return;
+
     if (level < 5)
     {
         // original items
@@ -2622,6 +2639,9 @@ inline Item* StoreNewItemInInventorySlot(Player* player, uint32 newItemId, uint3
 
 void PlayerbotFactory::InitBags(bool destroyOld)
 {
+    if (IsOrganicRandomBot())
+        return;
+
     for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
     {
         uint32 newItemId = 51809;
@@ -2756,7 +2776,7 @@ bool PlayerbotFactory::CanEquipUnseenItem(uint8 slot, uint16& dest, uint32 item)
 
 void PlayerbotFactory::InitTradeSkills()
 {
-    if (!sRandomPlayerbotMgr.IsRandomBot(bot))
+    if (!sRandomPlayerbotMgr.IsRandomBot(bot) || IsOrganicRandomBot())
         return;
 
     uint32 const maxPrimaryTradeSkills =
@@ -3041,9 +3061,14 @@ void PlayerbotFactory::UpdateTradeSkills()
 
 void PlayerbotFactory::InitSkills()
 {
-    //uint32 maxValue = level * 5; //not used, line marked for removal.
+    // Organic bots retain the weapon and profession skills they actually practised.
+    // UpdateSkillsForLevel raises existing caps without setting every usable skill to
+    // the new cap or assigning five professions for free.
     bot->UpdateSkillsForLevel();
+    if (IsOrganicRandomBot())
+        return;
 
+    //uint32 maxValue = level * 5; //not used, line marked for removal.
     bot->SetSkill(SKILL_RIDING, 0, 0, 0);
     if (bot->GetLevel() >= sPlayerbotAIConfig.useGroundMountAtMinLevel)
         bot->learnSpell(33388);
@@ -3211,6 +3236,9 @@ void PlayerbotFactory::SetRandomSkill(uint16 id)
 
 void PlayerbotFactory::InitAvailableSpells()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     if (trainerIdCache[bot->getClass()].empty())
     {
         CreatureTemplateContainer const* creatureTemplateContainer = sObjectMgr->GetCreatureTemplates();
@@ -3258,6 +3286,9 @@ void PlayerbotFactory::InitAvailableSpells()
 
 void PlayerbotFactory::InitClassSpells()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     int32_t level = bot->GetLevel();
     switch (bot->getClass())
     {
@@ -3636,6 +3667,9 @@ void PlayerbotFactory::ClearAllItems()
 
 void PlayerbotFactory::InitAmmo()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     uint8 const botClass = bot->getClass();
     if (botClass != CLASS_HUNTER && botClass != CLASS_ROGUE && botClass != CLASS_WARRIOR)
         return;
@@ -3685,6 +3719,9 @@ uint32 PlayerbotFactory::CalcMixedGearScore(uint32 gs, uint32 quality)
 
 void PlayerbotFactory::InitMounts()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     uint32 firstmount = sPlayerbotAIConfig.useGroundMountAtMinLevel;
     uint32 secondmount = sPlayerbotAIConfig.useFastGroundMountAtMinLevel;
     uint32 thirdmount = sPlayerbotAIConfig.useFlyMountAtMinLevel;
@@ -3825,6 +3862,9 @@ void PlayerbotFactory::UnbindInstance()
 
 void PlayerbotFactory::InitPotions()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     uint32 effects[] = {SPELL_EFFECT_HEAL, SPELL_EFFECT_ENERGIZE};
     for (uint8 i = 0; i < 2; ++i)
     {
@@ -3905,6 +3945,9 @@ std::vector<uint32> PlayerbotFactory::GetCurrentGemsCount()
 
 void PlayerbotFactory::InitFood()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     if (botAI && botAI->HasCheat(BotCheatMask::food))
     {
         return;
@@ -3969,6 +4012,9 @@ void PlayerbotFactory::InitFood()
 
 void PlayerbotFactory::InitReagents()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     std::vector<std::pair<uint32, uint32>> items;
     switch (bot->getClass())
     {
@@ -4154,6 +4200,9 @@ void PlayerbotFactory::CleanupConsumables() // remove old consumables as part of
 
 void PlayerbotFactory::InitGlyphs(bool increment)
 {
+    if (IsOrganicRandomBot())
+        return;
+
     bot->InitGlyphsForLevel();
     if (!increment && botAI &&
         botAI->GetAiObjectContext()->GetValue<bool>("custom_glyphs")->Get())
@@ -4965,6 +5014,9 @@ void PlayerbotFactory::ApplyEnchantTemplate(uint8 spec)
 
 void PlayerbotFactory::ApplyEnchantAndGemsNew(bool /*destroyOld*/)
 {
+    if (IsOrganicRandomBot())
+        return;
+
     //int32 bestGemEnchantId[4] = {-1, -1, -1, -1};  // 1, 2, 4, 8 color //not used, line marked for removal.
     //float bestGemScore[4] = {0, 0, 0, 0}; //not used, line marked for removal.
     std::vector<uint32> curCount = GetCurrentGemsCount();
@@ -5326,6 +5378,9 @@ void PlayerbotFactory::IterateItemsInBank(IterateItemsVisitor* visitor)
 
 void PlayerbotFactory::InitKeyring()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     if (!bot)
         return;
 
@@ -5376,6 +5431,9 @@ void PlayerbotFactory::InitKeyring()
 }
 void PlayerbotFactory::InitReputation()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     if (!bot)
         return;
 
@@ -5421,6 +5479,9 @@ void PlayerbotFactory::InitReputation()
 
 void PlayerbotFactory::InitAttunementQuests()
 {
+    if (IsOrganicRandomBot())
+        return;
+
     uint32 level = bot->GetLevel();
     if (level < 55)
         return; // Only apply for level 55+ bots

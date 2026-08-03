@@ -151,6 +151,7 @@ private:
     };
 
     void Prepare();
+    bool IsOrganicRandomBot() const;
     // void InitSecondEquipmentSet();
     // void InitEquipmentNew(bool incremental);
     bool CanEquipItem(ItemTemplate const* proto);

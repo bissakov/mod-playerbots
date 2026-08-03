@@ -366,6 +366,14 @@ bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint3
             if (poi.pos.GetMapId() == bot->GetMapId() && poiZone == currentZone)
                 continue;
 
+            // Area lookups around subzone boundaries can disagree even for a
+            // nearby objective in the same top-level zone. Normal quest movement
+            // can walk there directly; treating it as a zone migration requires a
+            // hub for the spurious area id and repeatedly failed local quests such
+            // as Sharing the Land in Mulgore.
+            if (poi.pos.GetMapId() == bot->GetMapId() && bot->GetExactDist(poi.pos) < 1500.0f)
+                continue;
+
             destination = poi.pos;
             questId = candidateQuest;
             return true;

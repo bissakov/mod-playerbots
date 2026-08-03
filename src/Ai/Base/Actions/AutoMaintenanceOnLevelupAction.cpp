@@ -26,7 +26,8 @@ bool AutoMaintenanceOnLevelupAction::Execute(Event /*event*/)
 
 void AutoMaintenanceOnLevelupAction::AutoTeleportForLevel()
 {
-    if (!sPlayerbotAIConfig.autoTeleportForLevel || !sRandomPlayerbotMgr.IsRandomBot(bot))
+    if (sPlayerbotAIConfig.organicProgression || !sPlayerbotAIConfig.autoTeleportForLevel ||
+        !sRandomPlayerbotMgr.IsRandomBot(bot))
         return;
 
     if (botAI->HasRealPlayerMaster())
@@ -70,10 +71,15 @@ void AutoMaintenanceOnLevelupAction::AutoLearnSpell()
 void AutoMaintenanceOnLevelupAction::LearnSpells(std::ostringstream* out)
 {
     BroadcastHelper::BroadcastLevelup(botAI, bot);
-    if (sPlayerbotAIConfig.autoLearnTrainerSpells && sRandomPlayerbotMgr.IsRandomBot(bot))
+    if (sPlayerbotAIConfig.autoLearnTrainerSpells && sRandomPlayerbotMgr.IsRandomBot(bot) &&
+        !sPlayerbotAIConfig.organicProgression)
         LearnTrainerSpells(out);
 
-    if (sPlayerbotAIConfig.autoLearnQuestSpells && sRandomPlayerbotMgr.IsRandomBot(bot))
+    // The normal quest reward path teaches these spells after the bot actually
+    // completes the quest. Factory-scanning every eligible class quest grants
+    // rewards for quests the bot has never accepted.
+    if (sPlayerbotAIConfig.autoLearnQuestSpells && sRandomPlayerbotMgr.IsRandomBot(bot) &&
+        !sPlayerbotAIConfig.organicProgression)
         LearnQuestSpells(out);
 }
 
@@ -82,13 +88,7 @@ void AutoMaintenanceOnLevelupAction::LearnTrainerSpells(std::ostringstream* /*ou
     PlayerbotFactory factory(bot, bot->GetLevel());
     factory.InitSkills();
     factory.InitClassSpells();
-
-    // InitClassSpells only grants the hardcoded baseline (Attack, Defensive Stance, Taunt, ...) a bot needs to
-    // function, so it stays. InitAvailableSpells hands out every trainer spell in the world for free, which is
-    // exactly what organic progression asks the bot to earn from a trainer instead.
-    if (!sPlayerbotAIConfig.organicProgression)
-        factory.InitAvailableSpells();
-
+    factory.InitAvailableSpells();
     factory.InitPet();
 }
 
@@ -171,6 +171,12 @@ void AutoMaintenanceOnLevelupAction::AutoUpgradeEquip()
     if (!sRandomPlayerbotMgr.IsRandomBot(bot))
         return;
 
+    // Organic bots keep and consume what they looted or bought. The stock
+    // maintenance path otherwise materializes arrows, food, potions, reagents,
+    // oils and stones on every level-up.
+    if (sPlayerbotAIConfig.organicProgression)
+        return;
+
     PlayerbotFactory factory(bot, bot->GetLevel());
 
     factory.CleanupConsumables();
@@ -181,8 +187,6 @@ void AutoMaintenanceOnLevelupAction::AutoUpgradeEquip()
     factory.InitConsumables();
     factory.InitPotions();
 
-    // Only gear is withheld under organic progression - the consumable init above is left alone on purpose,
-    // starving bots are a separate problem.
-    if (sPlayerbotAIConfig.autoUpgradeEquip && !sPlayerbotAIConfig.organicProgression)
+    if (sPlayerbotAIConfig.autoUpgradeEquip)
         factory.InitEquipment(true);
 }
