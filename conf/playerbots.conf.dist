@@ -1104,22 +1104,22 @@ AiPlayerbot.RpgStatusProbWeight.OutdoorPvp = 10
 # Format: AiPlayerbot.ZoneBracket.zoneID = minLevel,maxLevel
 #
 # Classic WoW - Low-level zones:
-# Dun Morogh             (Zone ID:    1    Default Min,Max:  5,12)
-# Elwynn Forest          (Zone ID:   12    Default Min,Max:  5,12)
-# Durotar                (Zone ID:   14    Default Min,Max:  5,12)
-# Tirisfal Glades        (Zone ID:   85    Default Min,Max:  5,12)
-# Teldrassil             (Zone ID:  141    Default Min,Max:  5,12)
-# Mulgore                (Zone ID:  215    Default Min,Max:  5,12)
-# Eversong Woods         (Zone ID: 3430    Default Min,Max:  5,12)
-# Azuremyst Isle         (Zone ID: 3524    Default Min,Max:  5,12)
-AiPlayerbot.ZoneBracket.1 = 5,12
-AiPlayerbot.ZoneBracket.12 = 5,12
-AiPlayerbot.ZoneBracket.14 = 5,12
-AiPlayerbot.ZoneBracket.85 = 5,12
-AiPlayerbot.ZoneBracket.141 = 5,12
-AiPlayerbot.ZoneBracket.215 = 5,12
-AiPlayerbot.ZoneBracket.3430 = 5,12
-AiPlayerbot.ZoneBracket.3524 = 5,12
+# Dun Morogh             (Zone ID:    1    Default Min,Max:  1,12)
+# Elwynn Forest          (Zone ID:   12    Default Min,Max:  1,12)
+# Durotar                (Zone ID:   14    Default Min,Max:  1,12)
+# Tirisfal Glades        (Zone ID:   85    Default Min,Max:  1,12)
+# Teldrassil             (Zone ID:  141    Default Min,Max:  1,12)
+# Mulgore                (Zone ID:  215    Default Min,Max:  1,12)
+# Eversong Woods         (Zone ID: 3430    Default Min,Max:  1,12)
+# Azuremyst Isle         (Zone ID: 3524    Default Min,Max:  1,12)
+AiPlayerbot.ZoneBracket.1 = 1,12
+AiPlayerbot.ZoneBracket.12 = 1,12
+AiPlayerbot.ZoneBracket.14 = 1,12
+AiPlayerbot.ZoneBracket.85 = 1,12
+AiPlayerbot.ZoneBracket.141 = 1,12
+AiPlayerbot.ZoneBracket.215 = 1,12
+AiPlayerbot.ZoneBracket.3430 = 1,12
+AiPlayerbot.ZoneBracket.3524 = 1,12
 
 # Classic WoW - Mid-level zones:
 # Barrens                (Zone ID:   17    Default Min,Max: 10,25)

@@ -4613,14 +4613,14 @@ std::vector<WorldLocation> TravelMgr::GetCityLocations(Player* bot)
 void TravelMgr::PrepareZone2LevelBracket()
 {
     // Classic WoW - starter zones
-    zone2LevelBracket[AREA_DUN_MOROGH]        = {5, 12};
-    zone2LevelBracket[AREA_ELWYNN_FOREST]     = {5, 12};
-    zone2LevelBracket[AREA_DUROTAR]           = {5, 12};
-    zone2LevelBracket[AREA_TIRISFAL_GLADES]   = {5, 12};
-    zone2LevelBracket[AREA_TELDRASSIL]        = {5, 12};
-    zone2LevelBracket[AREA_MULGORE]           = {5, 12};
-    zone2LevelBracket[AREA_EVERSONG_WOODS]    = {5, 12};
-    zone2LevelBracket[AREA_AZUREMYST_ISLE]    = {5, 12};
+    zone2LevelBracket[AREA_DUN_MOROGH]        = {1, 12};
+    zone2LevelBracket[AREA_ELWYNN_FOREST]     = {1, 12};
+    zone2LevelBracket[AREA_DUROTAR]           = {1, 12};
+    zone2LevelBracket[AREA_TIRISFAL_GLADES]   = {1, 12};
+    zone2LevelBracket[AREA_TELDRASSIL]        = {1, 12};
+    zone2LevelBracket[AREA_MULGORE]           = {1, 12};
+    zone2LevelBracket[AREA_EVERSONG_WOODS]    = {1, 12};
+    zone2LevelBracket[AREA_AZUREMYST_ISLE]    = {1, 12};
 
     // Classic WoW - low level zones
     zone2LevelBracket[AREA_THE_BARRENS]       = {10, 25};
