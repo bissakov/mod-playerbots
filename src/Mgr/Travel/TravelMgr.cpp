@@ -4951,8 +4951,17 @@ void TravelMgr::PrepareDestinationCache()
                 continue;
 
             WorldPosition pos(info->mapId, info->positionX, info->positionY, info->positionZ, info->orientation);
+            uint32 areaId = pos.getAreaId();
+            AreaTableEntry const* area = sAreaTableStore.LookupEntry(areaId);
+            uint32 zoneId = area && area->zone ? area->zone : areaId;
+            auto bracket = zone2LevelBracket.find(zoneId);
+            if (bracket == zone2LevelBracket.end())
+                break;
 
-            for (int32 l = 1; l <= 5; l++)
+            // Start locations remain useful faction-safe recovery anchors throughout the
+            // starter-zone bracket. Limiting them to level 5 left a bot parked near the only
+            // same-zone innkeeper with no second local destination from level 6 onward.
+            for (uint32 l = bracket->second.low; l <= bracket->second.high; l++)
             {
                 if ((1 << (i - 1)) & sRaceMgr->GetAllianceRaceMask())
                     allianceHubsPerLevelCache[(uint8)l].push_back(pos);

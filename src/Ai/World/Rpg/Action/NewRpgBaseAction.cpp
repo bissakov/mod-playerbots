@@ -48,6 +48,8 @@ namespace
 constexpr uint32 PLAYER_UNSTUCK_SPELL = 7355;
 constexpr uint32 PLAYER_UNSTUCK_FAILURES = 3;
 constexpr uint32 PLAYER_UNSTUCK_COOLDOWN = 15 * MINUTE * IN_MILLISECONDS;
+constexpr float LOCAL_RECOVERY_MIN_DISTANCE = 120.0f;
+constexpr float LOCAL_RECOVERY_MAX_DISTANCE = 2000.0f;
 }
 
 MoveFarOutcome NewRpgBaseAction::MoveFarTo(WorldPosition dest)
@@ -393,33 +395,95 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
 
     uint32 requestedZone = requestedDestination ? GetPositionZoneId(requestedDestination) : 0;
     uint32 currentZone = bot->GetZoneId();
-    std::vector<TravelMgr::ZoneHub> hubs = sTravelMgr.GetFactionCompatibleLevelHubs(bot);
-    hubs.erase(std::remove_if(hubs.begin(), hubs.end(), [&](TravelMgr::ZoneHub const& hub)
-    {
-        if (std::find(failedHubExclusions.begin(), failedHubExclusions.end(), hub.zoneId) !=
-            failedHubExclusions.end())
-            return true;
-        if (breadcrumb)
-            return hub.zoneId != requestedZone;
-        return hub.zoneId == currentZone;
-    }), hubs.end());
-
     WorldPosition current(bot);
-    std::sort(hubs.begin(), hubs.end(), [&](TravelMgr::ZoneHub const& left, TravelMgr::ZoneHub const& right)
+    std::vector<TravelMgr::ZoneHub> hubs;
+    std::vector<TravelMgr::ZoneHub> localHubs;
+    for (TravelMgr::ZoneHub const& hub : sTravelMgr.GetFactionCompatibleLevelHubs(bot))
     {
-        return current.fDist(left.position) < current.fDist(right.position);
-    });
-    std::vector<Candidate> candidates;
-    for (TravelMgr::ZoneHub const& hub : hubs)
-    {
-        ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, hub.position);
-        if (!route.steps.empty())
-            candidates.push_back({hub, std::move(route)});
-        if (candidates.size() >= 6)
-            break;
+        if (std::find(failedHubExclusions.begin(), failedHubExclusions.end(), hub.zoneId) != failedHubExclusions.end())
+            continue;
+
+        if (breadcrumb)
+        {
+            if (hub.zoneId == requestedZone)
+                hubs.push_back(hub);
+            continue;
+        }
+
+        if (hub.zoneId != currentZone)
+        {
+            hubs.push_back(hub);
+            continue;
+        }
+
+        // A nearby faction-safe hub gives a stalled bot somewhere useful to walk when the
+        // travel graph cannot connect it to another zone. Keep the target outside the arrival
+        // radius so this cannot merely reset the progress timer, and cap the distance so the
+        // recovery remains local rather than becoming another cross-zone journey.
+        if (hub.position.GetMapId() != current.GetMapId())
+            continue;
+        float distance = current.fDist(hub.position);
+        if (distance >= LOCAL_RECOVERY_MIN_DISTANCE && distance <= LOCAL_RECOVERY_MAX_DISTANCE)
+            localHubs.push_back(hub);
     }
 
+    auto sortNearest = [&](std::vector<TravelMgr::ZoneHub>& candidateHubs)
+    {
+        std::sort(candidateHubs.begin(), candidateHubs.end(),
+                  [&](TravelMgr::ZoneHub const& left, TravelMgr::ZoneHub const& right)
+                  { return current.fDist(left.position) < current.fDist(right.position); });
+    };
+    sortNearest(hubs);
+    sortNearest(localHubs);
+
+    std::vector<Candidate> candidates;
+    auto buildCandidates = [&](std::vector<TravelMgr::ZoneHub> const& candidateHubs)
+    {
+        for (TravelMgr::ZoneHub const& hub : candidateHubs)
+        {
+            ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, hub.position);
+            if (!route.steps.empty())
+                candidates.push_back({hub, std::move(route)});
+            if (candidates.size() >= 6)
+                break;
+        }
+    };
+    buildCandidates(hubs);
+
     std::size_t hubCandidates = candidates.size();
+    std::size_t localHubCandidates = 0;
+    if (candidates.empty() && !breadcrumb)
+    {
+        for (TravelMgr::ZoneHub const& hub : localHubs)
+        {
+            ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, hub.position);
+            bool walkingRoute =
+                !route.steps.empty() && std::all_of(route.steps.begin(), route.steps.end(),
+                                                    [&](ZoneTravelStep const& step)
+                                                    {
+                                                        return step.method == ZoneTravelMethod::Walk &&
+                                                               step.from.GetMapId() == current.GetMapId() &&
+                                                               step.to.GetMapId() == current.GetMapId();
+                                                    });
+
+            // Cross-zone graph failures often affect the local graph path too. MoveFarTo can
+            // safely advance toward a same-zone destination through partial mmap paths and
+            // nearby stepping stones, so retain a bounded walking recovery even when the graph
+            // cannot precompute the complete route. Never use a transport or teleport for this
+            // fallback: the destination itself is the faction-safe recovery boundary.
+            if (!walkingRoute)
+            {
+                route = ZoneTravelRoute();
+                route.steps.push_back({ZoneTravelMethod::Walk, current, hub.position});
+                route.cost = current.fDist(hub.position) / std::max(1.0f, bot->GetSpeed(MOVE_RUN));
+            }
+
+            candidates.push_back({hub, std::move(route)});
+            if (candidates.size() >= 6)
+                break;
+        }
+        localHubCandidates = candidates.size();
+    }
     bool directAttempted = false;
     bool directRouted = false;
     // A requestedZone of 0 means GetPositionZoneId() could not resolve the point,
@@ -443,9 +507,9 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
     if (candidates.empty())
         LOG_WARN("playerbots",
                  "[New RPG] {} StartZoneTravel gave up: breadcrumb {}, hubsAfterFilter {}, hubRoutes {}, "
-                 "directAttempted {}, directRouted {}, requestedZone {}",
-                 bot->GetName(), breadcrumb, hubs.size(), hubCandidates, directAttempted, directRouted,
-                 requestedZone);
+                 "localHubsAfterFilter {}, localHubRoutes {}, directAttempted {}, directRouted {}, requestedZone {}",
+                 bot->GetName(), breadcrumb, hubs.size(), hubCandidates, localHubs.size(), localHubCandidates,
+                 directAttempted, directRouted, requestedZone);
 
     if (candidates.empty())
         return false;
@@ -462,9 +526,13 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
                                       std::move(candidate.route.steps), candidate.route.cost,
                                       std::move(failedHubExclusions));
     botAI->rpgStatistic.zoneTransitionsStarted++;
-    LOG_INFO("playerbots", "[New RPG] {} starting {} zone transition from zone {} to zone {} at level {}",
-             bot->GetName(), breadcrumb ? "breadcrumb" : "fallback", currentZone, candidate.hub.zoneId,
-             bot->GetLevel());
+    if (!breadcrumb && candidate.hub.zoneId == currentZone)
+        LOG_INFO("playerbots", "[New RPG] {} starting local recovery within zone {} at level {}",
+                 bot->GetName(), currentZone, bot->GetLevel());
+    else
+        LOG_INFO("playerbots", "[New RPG] {} starting {} zone transition from zone {} to zone {} at level {}",
+                 bot->GetName(), breadcrumb ? "breadcrumb" : "fallback", currentZone, candidate.hub.zoneId,
+                 bot->GetLevel());
     return true;
 }
 
