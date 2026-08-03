@@ -46,8 +46,8 @@ bool ReleaseSpiritAction::Execute(Event event)
         : PlayerbotTextMgr::instance().GetBotTextOrDefault("release_spirit_meet_graveyard", "Meet me at the graveyard", {});
     botAI->TellMasterNoFacing(message);
 
-    IncrementDeathCount();
-    bot->DurabilityRepairAll(false, 1.0f, false);
+    if (!sPlayerbotAIConfig.organicProgression)
+        bot->DurabilityRepairAll(false, 1.0f, false);
     LogRelease("released");
 
     WorldPacket releasePacket(CMSG_REPOP_REQUEST);
@@ -55,17 +55,6 @@ bool ReleaseSpiritAction::Execute(Event event)
     bot->GetSession()->HandleRepopRequestOpcode(releasePacket);
 
     return true;
-}
-
-void ReleaseSpiritAction::IncrementDeathCount() const
-{
-    // Death Count to prevent skeleton piles
-    Player* master = botAI->GetMaster();
-    if (!master || GET_PLAYERBOT_AI(master))
-    {
-        uint32 deathCount = AI_VALUE(uint32, "death count");
-        context->GetValue<uint32>("death count")->Set(deathCount + 1);
-    }
 }
 
 void ReleaseSpiritAction::LogRelease(const std::string& releaseMsg) const
@@ -83,8 +72,8 @@ void ReleaseSpiritAction::LogRelease(const std::string& releaseMsg) const
 // AutoReleaseSpiritAction implementation
 bool AutoReleaseSpiritAction::Execute(Event /*event*/)
 {
-    IncrementDeathCount();
-    bot->DurabilityRepairAll(false, 1.0f, false);
+    if (!sPlayerbotAIConfig.organicProgression)
+        bot->DurabilityRepairAll(false, 1.0f, false);
     LogRelease("auto released");
 
     WorldPacket packet(CMSG_REPOP_REQUEST);

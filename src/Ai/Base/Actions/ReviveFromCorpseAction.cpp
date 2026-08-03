@@ -98,11 +98,10 @@ bool FindCorpseAction::Execute(Event /*event*/)
     {
         if (dCount >= 5)
         {
-            // LOG_INFO("playerbots", "Bot {} {}:{} <{}>: died too many times, was revived and teleported",
-            //     bot->GetGUID().ToString().c_str(), bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(),
-            //     bot->GetName().c_str());
+            if (sPlayerbotAIConfig.organicProgression)
+                return botAI->DoSpecificAction("spirit healer", Event(), true);
+
             context->GetValue<uint32>("death count")->Set(0);
-            // sRandomPlayerbotMgr.RandomTeleportForLevel(bot);
             sRandomPlayerbotMgr.Revive(bot);
             return true;
         }
@@ -116,6 +115,16 @@ bool FindCorpseAction::Execute(Event /*event*/)
     float reclaimDist = CORPSE_RECLAIM_RADIUS - 5.0f;
     float corpseDist = botPos.distance(corpsePos);
     int64 deadTime = time(nullptr) - corpse->GetGhostTime();
+
+    // A movement generator can remain active even when the ghost has made no
+    // useful progress. Bound corpse runs and use the normal Spirit Healer path
+    // instead of treating "is moving" as success forever.
+    if (deadTime >= 10 * MINUTE)
+    {
+        bot->StopMoving();
+        bot->GetMotionMaster()->Clear();
+        return botAI->DoSpecificAction("spirit healer", Event(), true);
+    }
 
     bool moveToLeader = groupLeader && groupLeader != bot && leaderPos.fDist(corpsePos) < reclaimDist;
 
@@ -308,8 +317,17 @@ bool SpiritHealerAction::Execute(Event /*event*/)
 
     GraveyardStruct const* ClosestGrave =
         GetGrave(dCount > 10 || deadTime > 15 * MINUTE || AI_VALUE(uint8, "durability") < 10);
+    if (!ClosestGrave)
+        return false;
 
-    if (bot->GetDistance2d(ClosestGrave->x, ClosestGrave->y) < sPlayerbotAIConfig.sightDistance)
+    float graveDistance = bot->GetDistance2d(ClosestGrave->x, ClosestGrave->y);
+    if (deadTime >= 10 * MINUTE && graveDistance >= sPlayerbotAIConfig.sightDistance)
+    {
+        bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
+        return bot->TeleportTo(ClosestGrave->Map, ClosestGrave->x, ClosestGrave->y, ClosestGrave->z, 0.f);
+    }
+
+    if (graveDistance < sPlayerbotAIConfig.sightDistance)
     {
         GuidVector npcs = AI_VALUE(GuidVector, "nearest npcs");
         for (GuidVector::iterator i = npcs.begin(); i != npcs.end(); i++)
@@ -319,9 +337,15 @@ bool SpiritHealerAction::Execute(Event /*event*/)
             {
                 LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> revives at spirit healer", bot->GetGUID().ToString().c_str(),
                           bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
-                PlayerbotChatHandler ch(bot);
-                bot->ResurrectPlayer(0.5f);
-                bot->SpawnCorpseBones();
+                // Use the same opcode as a player speaking to the spirit healer.
+                // The normal handler applies durability loss and resurrection
+                // sickness; calling ResurrectPlayer directly bypasses both.
+                WorldPacket packet(CMSG_SPIRIT_HEALER_ACTIVATE);
+                packet << unit->GetGUID();
+                bot->GetSession()->HandleSpiritHealerActivateOpcode(packet);
+                if (bot->isDead())
+                    return false;
+
                 context->GetValue<Unit*>("current target")->Set(nullptr);
                 bot->SetTarget();
                 botAI->TellMaster(PlayerbotTextMgr::instance().GetBotTextOrDefault("hello", "Hello", {}));
@@ -332,11 +356,6 @@ bool SpiritHealerAction::Execute(Event /*event*/)
                 return true;
             }
         }
-    }
-
-    if (!ClosestGrave)
-    {
-        return false;
     }
 
     bool moved = false;

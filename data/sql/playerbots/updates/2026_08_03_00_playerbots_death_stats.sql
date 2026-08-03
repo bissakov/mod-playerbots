@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `playerbots_death_stats` (
+    `bot` INT UNSIGNED NOT NULL,
+    `deaths` INT UNSIGNED NOT NULL DEFAULT 0,
+    `releases` INT UNSIGNED NOT NULL DEFAULT 0,
+    `resurrections` INT UNSIGNED NOT NULL DEFAULT 0,
+    `normal_resurrections` INT UNSIGNED NOT NULL DEFAULT 0,
+    `spirit_healer_resurrections` INT UNSIGNED NOT NULL DEFAULT 0,
+    `total_ghost_seconds` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    `last_ghost_seconds` INT UNSIGNED NOT NULL DEFAULT 0,
+    `state` ENUM('alive', 'dead', 'ghost') NOT NULL DEFAULT 'alive',
+    `last_resurrection_method` VARCHAR(32) NOT NULL DEFAULT '',
+    `last_death` INT UNSIGNED NOT NULL DEFAULT 0,
+    `last_release` INT UNSIGNED NOT NULL DEFAULT 0,
+    `last_resurrection` INT UNSIGNED NOT NULL DEFAULT 0,
+    `last_level` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    `last_map` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    `last_zone` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`bot`),
+    KEY `idx_state_release` (`state`, `last_release`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

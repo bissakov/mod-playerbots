@@ -20,9 +20,6 @@ public:
 
     bool Execute(Event event) override;
     void LogRelease(const std::string& releaseType) const;
-
-protected:
-    void IncrementDeathCount() const;
 };
 
 class AutoReleaseSpiritAction : public ReleaseSpiritAction

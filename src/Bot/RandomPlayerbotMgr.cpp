@@ -19,6 +19,7 @@
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
 #include "ChannelMgr.h"
+#include "Corpse.h"
 #include "DBCStores.h"
 #include "DBCStructure.h"
 #include "DatabaseEnv.h"
@@ -1492,17 +1493,34 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
         }
     }
 
-    // if death revive
     if (bot->isDead())
     {
         if (!GetEventValue(botId, "dead"))
         {
+            SetEventValue(botId, "dead", 1, sPlayerbotAIConfig.maxRandomBotInWorldTime);
+
+            if (sPlayerbotAIConfig.organicProgression)
+            {
+                LOG_DEBUG("playerbots", "Mark organic bot {} as dead; the bot must recover its corpse.",
+                          bot->GetName());
+                return false;
+            }
+
             uint32 randomTime =
                 urand(sPlayerbotAIConfig.minRandomBotReviveTime, sPlayerbotAIConfig.maxRandomBotReviveTime);
-            LOG_DEBUG("playerbots", "Mark bot {} as dead, will be revived in {}s.", bot->GetName().c_str(),
-                      randomTime);
-            SetEventValue(botId, "dead", 1, sPlayerbotAIConfig.maxRandomBotInWorldTime);
+            LOG_DEBUG("playerbots", "Mark bot {} as dead, will be revived in {}s.", bot->GetName(), randomTime);
             SetEventValue(botId, "revive", 1, randomTime);
+            return false;
+        }
+
+        // Organic bots use the dead AI strategy: release at the graveyard, run
+        // back to their corpse, and reclaim it. The manager's timed Revive path
+        // bypasses that entire player lifecycle.
+        if (sPlayerbotAIConfig.organicProgression)
+        {
+            Corpse* corpse = bot->GetCorpse();
+            if (botAI && corpse && time(nullptr) - corpse->GetGhostTime() >= 10 * MINUTE)
+                botAI->DoSpecificAction("spirit healer");
             return false;
         }
 
@@ -1513,6 +1531,14 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
         }
 
         return false;
+    }
+
+    // The dead event is a live-state flag, not a death counter. Clear it after
+    // corpse reclaim, spirit-healer resurrection, or a player resurrection.
+    if (GetEventValue(botId, "dead"))
+    {
+        SetEventValue(botId, "dead", 0, 0);
+        SetEventValue(botId, "revive", 0, 0);
     }
 
     // leave group if leader is rndbot
@@ -1599,6 +1625,12 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
     }
 
     return false;
+}
+
+void RandomPlayerbotMgr::Kill(Player* player)
+{
+    if (player && player->IsAlive())
+        player->KillSelf();
 }
 
 void RandomPlayerbotMgr::Revive(Player* player)
@@ -2456,7 +2488,7 @@ bool RandomPlayerbotMgr::HandlePlayerbotConsoleCommand(ChatHandler* /*handler*/,
 
     if (!args || !*args)
     {
-        LOG_ERROR("playerbots", "Usage: rndbot stats/update/reset/init/refresh/add/remove");
+        LOG_ERROR("playerbots", "Usage: rndbot stats/update/reset/init/refresh/add/remove/kill <exact name>");
         return false;
     }
 
@@ -2489,12 +2521,20 @@ bool RandomPlayerbotMgr::HandlePlayerbotConsoleCommand(ChatHandler* /*handler*/,
         return true;
     }
 
+    if (cmd.starts_with("kill") &&
+        (!cmd.starts_with("kill ") || cmd.size() == 5 || cmd.find_first_of("%_") != std::string::npos))
+    {
+        LOG_ERROR("playerbots", "Usage: rndbot kill <exact name>; wildcards are not allowed");
+        return false;
+    }
+
     std::map<std::string, ConsoleCommandHandler> handlers;
     // handlers["initmin"] = &RandomPlayerbotMgr::RandomizeMin;
     handlers["init"] = &RandomPlayerbotMgr::RandomizeFirst;
     handlers["clear"] = &RandomPlayerbotMgr::Clear;
     handlers["levelup"] = handlers["level"] = &RandomPlayerbotMgr::IncreaseLevel;
     handlers["refresh"] = &RandomPlayerbotMgr::Refresh;
+    handlers["kill"] = &RandomPlayerbotMgr::Kill;
     handlers["teleport"] = &RandomPlayerbotMgr::RandomTeleportForLevel;
     // handlers["rpg"] = &RandomPlayerbotMgr::RandomTeleportForRpg;
     handlers["revive"] = &RandomPlayerbotMgr::Revive;

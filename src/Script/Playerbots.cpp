@@ -67,18 +67,56 @@ public:
 class PlayerbotsPlayerScript : public PlayerScript
 {
 public:
-    PlayerbotsPlayerScript() : PlayerScript("PlayerbotsPlayerScript", {
-        PLAYERHOOK_ON_LOGIN,
-        PLAYERHOOK_ON_AFTER_UPDATE,
-        PLAYERHOOK_ON_BEFORE_CRITERIA_PROGRESS,
-        PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE,
-        PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
-        PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT,
-        PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
-        PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT,
-        PLAYERHOOK_ON_GIVE_EXP,
-        PLAYERHOOK_ON_BEFORE_TELEPORT
-    }) {}
+    PlayerbotsPlayerScript()
+        : PlayerScript(
+              "PlayerbotsPlayerScript",
+              {PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_PLAYER_JUST_DIED, PLAYERHOOK_ON_PLAYER_RELEASED_GHOST,
+               PLAYERHOOK_ON_PLAYER_RESURRECT, PLAYERHOOK_ON_AFTER_UPDATE, PLAYERHOOK_ON_BEFORE_CRITERIA_PROGRESS,
+               PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
+               PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT, PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
+               PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT, PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_BEFORE_TELEPORT})
+    {
+    }
+
+    void OnPlayerJustDied(Player* player) override
+    {
+        if (!IsTrackedRandomBot(player))
+            return;
+
+        PlayerbotsDatabasePreparedStatement* statement =
+            PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_UPS_DEATH_STATS_DEATH);
+        statement->SetData(0, player->GetGUID().GetCounter());
+        statement->SetData(1, player->GetLevel());
+        statement->SetData(2, player->GetMapId());
+        statement->SetData(3, player->GetZoneId());
+        PlayerbotsDatabase.Execute(statement);
+    }
+
+    void OnPlayerReleasedGhost(Player* player) override
+    {
+        if (!IsTrackedRandomBot(player))
+            return;
+
+        PlayerbotsDatabasePreparedStatement* statement =
+            PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_UPS_DEATH_STATS_RELEASE);
+        statement->SetData(0, player->GetGUID().GetCounter());
+        PlayerbotsDatabase.Execute(statement);
+    }
+
+    void OnPlayerResurrect(Player* player, float /*restorePercent*/, bool& applySickness) override
+    {
+        if (!IsTrackedRandomBot(player))
+            return;
+
+        bool const spiritHealer = applySickness;
+        PlayerbotsDatabasePreparedStatement* statement =
+            PlayerbotsDatabase.GetPreparedStatement(PLAYERBOTS_UPS_DEATH_STATS_RESURRECTION);
+        statement->SetData(0, player->GetGUID().GetCounter());
+        statement->SetData(1, spiritHealer ? 0 : 1);
+        statement->SetData(2, spiritHealer ? 1 : 0);
+        statement->SetData(3, spiritHealer ? "spirit_healer" : "normal");
+        PlayerbotsDatabase.Execute(statement);
+    }
 
     void OnPlayerLogin(Player* player) override
     {
@@ -108,6 +146,14 @@ public:
         }
     }
 
+private:
+    static bool IsTrackedRandomBot(Player* player)
+    {
+        return player && player->GetSession() && player->GetSession()->IsBot() &&
+               sRandomPlayerbotMgr.IsRandomBot(player);
+    }
+
+public:
     bool OnPlayerBeforeTeleport(Player* /*player*/, uint32 /*mapid*/, float /*x*/, float /*y*/, float /*z*/,
                                 float /*orientation*/, uint32 /*options*/, Unit* /*target*/) override
     {
