@@ -38,6 +38,12 @@ public:
     GraveyardStruct const* GetGrave(bool startZone);
     bool Execute(Event event) override;
     bool isUseful() override;
+
+private:
+    Unit* FindSpiritHealer();
+    bool ActivateSpiritHealer(Unit* healer);
+    bool ResurrectAtGraveyard(std::string const& reason);
+    void FinishResurrection();
 };
 
 #endif

@@ -1518,9 +1518,14 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
         // bypasses that entire player lifecycle.
         if (sPlayerbotAIConfig.organicProgression)
         {
+            // The dead strategy only drives a bot that still has a corpse to run
+            // back to, so a ghost that lost its corpse needs the Spirit Healer
+            // fallback right away rather than after the corpse-run timeout.
             Corpse* corpse = bot->GetCorpse();
-            if (botAI && corpse && time(nullptr) - corpse->GetGhostTime() >= 10 * MINUTE)
-                botAI->DoSpecificAction("spirit healer");
+            bool const corpseRunTimedOut = corpse && time(nullptr) - corpse->GetGhostTime() >= 10 * MINUTE;
+            bool const lostCorpse = !corpse && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST);
+            if (botAI && (corpseRunTimedOut || lostCorpse))
+                botAI->DoSpecificAction("spirit healer", Event(), true);
             return false;
         }
 

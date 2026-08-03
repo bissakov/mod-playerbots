@@ -6,15 +6,25 @@
 
 #include "ReviveFromCorpseAction.h"
 
+#include <limits>
+
+#include "Corpse.h"
 #include "Event.h"
 #include "FleeManager.h"
 #include "GameGraveyard.h"
 #include "MapMgr.h"
+#include "ObjectDefines.h"
 #include "PlayerbotTextMgr.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 #include "ServerFacade.h"
-#include "Corpse.h"
+
+namespace
+{
+// A ghost that has spent this long failing to reach or activate a Spirit
+// Healer is resurrected directly, so recovery always terminates.
+constexpr int64 SPIRIT_HEALER_DEADLINE = 20 * MINUTE;
+}  // namespace
 
 bool ReviveFromCorpseAction::Execute(Event event)
 {
@@ -308,6 +318,12 @@ bool SpiritHealerAction::Execute(Event /*event*/)
     Corpse* corpse = bot->GetCorpse();
     if (!corpse)
     {
+        // A ghost whose corpse is not on the current map, because it expired or
+        // because a graveyard teleport crossed maps, can never reclaim it and
+        // has no path back to a Spirit Healer either.
+        if (bot->HasPlayerFlag(PLAYER_FLAGS_GHOST) && ResurrectAtGraveyard("its corpse is gone"))
+            return true;
+
         botAI->TellError("I am not a spirit");
         return false;
     }
@@ -315,12 +331,18 @@ bool SpiritHealerAction::Execute(Event /*event*/)
     uint32 dCount = AI_VALUE(uint32, "death count");
     int64 deadTime = time(nullptr) - corpse->GetGhostTime();
 
+    if (deadTime >= SPIRIT_HEALER_DEADLINE && ResurrectAtGraveyard("no Spirit Healer could be reached"))
+        return true;
+
     GraveyardStruct const* ClosestGrave =
         GetGrave(dCount > 10 || deadTime > 15 * MINUTE || AI_VALUE(uint8, "durability") < 10);
     if (!ClosestGrave)
         return false;
 
-    float graveDistance = bot->GetDistance2d(ClosestGrave->x, ClosestGrave->y);
+    // A graveyard on another map is not "nearby" no matter what its coordinates
+    // compare to, so never let a cross-map grave pass the proximity checks.
+    float graveDistance = ClosestGrave->Map == bot->GetMapId() ? bot->GetDistance2d(ClosestGrave->x, ClosestGrave->y)
+                                                               : std::numeric_limits<float>::max();
     if (deadTime >= 10 * MINUTE && graveDistance >= sPlayerbotAIConfig.sightDistance)
     {
         bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
@@ -329,32 +351,28 @@ bool SpiritHealerAction::Execute(Event /*event*/)
 
     if (graveDistance < sPlayerbotAIConfig.sightDistance)
     {
-        GuidVector npcs = AI_VALUE(GuidVector, "nearest npcs");
-        for (GuidVector::iterator i = npcs.begin(); i != npcs.end(); i++)
+        if (Unit* healer = FindSpiritHealer())
         {
-            Unit* unit = botAI->GetUnit(*i);
-            if (unit && unit->HasNpcFlag(UNIT_NPC_FLAG_SPIRITHEALER))
-            {
-                LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> revives at spirit healer", bot->GetGUID().ToString().c_str(),
-                          bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
-                // Use the same opcode as a player speaking to the spirit healer.
-                // The normal handler applies durability loss and resurrection
-                // sickness; calling ResurrectPlayer directly bypasses both.
-                WorldPacket packet(CMSG_SPIRIT_HEALER_ACTIVATE);
-                packet << unit->GetGUID();
-                bot->GetSession()->HandleSpiritHealerActivateOpcode(packet);
-                if (bot->isDead())
-                    return false;
+            // The activation opcode is silently dropped unless the healer is
+            // within the same interaction range a player needs, so close the
+            // remaining distance instead of talking to it from across the
+            // graveyard.
+            if (healer->IsWithinDistInMap(bot, INTERACTION_DISTANCE))
+                return ActivateSpiritHealer(healer);
 
-                context->GetValue<Unit*>("current target")->Set(nullptr);
-                bot->SetTarget();
-                botAI->TellMaster(PlayerbotTextMgr::instance().GetBotTextOrDefault("hello", "Hello", {}));
-
-                if (dCount > 20)
-                    context->GetValue<uint32>("death count")->Set(0);
-
+            if (bot->isMoving() || MoveNear(healer, sPlayerbotAIConfig.contactDistance))
                 return true;
+
+            // Walking the last few yards has been failing long enough that the
+            // ghost has to be put next to the healer instead.
+            if (deadTime >= 15 * MINUTE)
+            {
+                bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
+                return bot->TeleportTo(healer->GetMapId(), healer->GetPositionX(), healer->GetPositionY(),
+                                       healer->GetPositionZ(), 0.f);
             }
+
+            return false;
         }
     }
 
@@ -380,6 +398,96 @@ bool SpiritHealerAction::Execute(Event /*event*/)
 
     // botAI->TellError("Cannot find any spirit healer nearby");
     return false;
+}
+
+Unit* SpiritHealerAction::FindSpiritHealer()
+{
+    Unit* closest = nullptr;
+    float closestDistance = 0.f;
+
+    GuidVector npcs = AI_VALUE(GuidVector, "nearest npcs");
+    for (ObjectGuid const& guid : npcs)
+    {
+        Unit* unit = botAI->GetUnit(guid);
+        if (!unit || !unit->HasNpcFlag(UNIT_NPC_FLAG_SPIRITHEALER))
+            continue;
+
+        // Interaction is refused for anything the bot is unfriendly with, so
+        // the other faction's healer must not become the target the bot waits
+        // in front of forever.
+        if (unit->GetReactionTo(bot) <= REP_UNFRIENDLY)
+            continue;
+
+        float distance = bot->GetDistance(unit);
+        if (!closest || distance < closestDistance)
+        {
+            closest = unit;
+            closestDistance = distance;
+        }
+    }
+
+    return closest;
+}
+
+bool SpiritHealerAction::ActivateSpiritHealer(Unit* healer)
+{
+    // Use the same opcode as a player speaking to the spirit healer. The normal
+    // handler applies durability loss and resurrection sickness; calling
+    // ResurrectPlayer directly bypasses both.
+    WorldPacket packet(CMSG_SPIRIT_HEALER_ACTIVATE);
+    packet << healer->GetGUID();
+    bot->GetSession()->HandleSpiritHealerActivateOpcode(packet);
+
+    // The handler drops the request without any reply when it rejects the
+    // healer, so verify the explicit resurrection state rather than inferring
+    // success from the ghost's nonzero health.
+    if (!bot->IsAlive() || bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> was refused by the spirit healer", bot->GetGUID().ToString(),
+                  bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
+        return false;
+    }
+
+    LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> revives at spirit healer", bot->GetGUID().ToString(),
+              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
+
+    FinishResurrection();
+    return true;
+}
+
+bool SpiritHealerAction::ResurrectAtGraveyard(std::string const& reason)
+{
+    // Battlegrounds resurrect their ghosts on the spirit healer's own timer.
+    if (bot->InBattleground())
+        return false;
+
+    // Same lifecycle as talking to a spirit healer: resurrection sickness,
+    // durability loss, corpse bones and the graveyard teleport.
+    bot->GetSession()->SendSpiritResurrect();
+
+    if (!bot->IsAlive() || bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        LOG_ERROR("playerbots", "Bot {} {}:{} <{}> stays a ghost after a forced spirit healer resurrection",
+                  bot->GetGUID().ToString(), bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(),
+                  bot->GetName());
+        return false;
+    }
+
+    LOG_INFO("playerbots", "Bot {} {}:{} <{}> revives without a spirit healer: {}", bot->GetGUID().ToString(),
+             bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), reason);
+
+    FinishResurrection();
+    return true;
+}
+
+void SpiritHealerAction::FinishResurrection()
+{
+    context->GetValue<Unit*>("current target")->Set(nullptr);
+    bot->SetTarget();
+    botAI->TellMaster(PlayerbotTextMgr::instance().GetBotTextOrDefault("hello", "Hello", {}));
+
+    if (AI_VALUE(uint32, "death count") > 20)
+        context->GetValue<uint32>("death count")->Set(0);
 }
 
 bool SpiritHealerAction::isUseful() { return bot->HasPlayerFlag(PLAYER_FLAGS_GHOST); }
