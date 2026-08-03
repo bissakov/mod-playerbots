@@ -6,9 +6,48 @@
 
 #include "MaintenanceValues.h"
 
+#include <cmath>
+
 #include "BudgetValues.h"
 #include "ItemUsageValue.h"
 #include "Playerbots.h"
+
+bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor)
+{
+    if (!vendor || !vendor->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
+        return false;
+
+    Player* bot = botAI->GetBot();
+    uint32 smallestBagSize = UINT32_MAX;
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    {
+        Bag const* equippedBag = static_cast<Bag const*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
+        smallestBagSize = std::min(smallestBagSize, equippedBag ? equippedBag->GetBagSize() : 0u);
+    }
+
+    VendorItemData const* items = vendor->GetVendorItems();
+    if (!items)
+        return false;
+
+    uint32 availableMoney =
+        botAI->GetAiObjectContext()
+            ->GetValue<uint32>("free money for", std::to_string(static_cast<uint32>(NeedMoneyFor::gear)))
+            ->Get();
+    float discount = bot->GetReputationPriceDiscount(vendor);
+    for (VendorItem const* item : items->m_items)
+    {
+        ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item->item);
+        if (!itemTemplate || itemTemplate->Class != ITEM_CLASS_CONTAINER ||
+            itemTemplate->SubClass != ITEM_SUBCLASS_CONTAINER || itemTemplate->ContainerSlots <= smallestBagSize)
+            continue;
+
+        uint32 price = static_cast<uint32>(std::floor(itemTemplate->BuyPrice * discount));
+        if (price <= availableMoney)
+            return true;
+    }
+
+    return false;
+}
 
 bool CanMoveAroundValue::Calculate()
 {
@@ -47,7 +86,8 @@ bool CanSellValue::Calculate()
 
 bool CanTrainValue::Calculate()
 {
-    return AI_VALUE2(uint32, "free money for", (uint32)NeedMoneyFor::spells) > 0;
+    uint32 trainCost = AI_VALUE(uint32, "train cost");
+    return trainCost > 0 && AI_VALUE2(uint32, "free money for", static_cast<uint32>(NeedMoneyFor::spells)) >= trainCost;
 }
 
 bool ShouldBankValue::Calculate()

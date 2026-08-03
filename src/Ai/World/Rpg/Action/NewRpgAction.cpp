@@ -15,6 +15,7 @@
 #include "G3D/Vector2.h"
 #include "GossipDef.h"
 #include "IVMapMgr.h"
+#include "MaintenanceValues.h"
 #include "NewRpgInfo.h"
 #include "NewRpgStrategy.h"
 #include "Object.h"
@@ -80,26 +81,8 @@ bool NewRpgStatusUpdateAction::NeedsErrandAt(ObjectGuid npcGuid)
         npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR))
         return true;
 
-    if (AI_VALUE(bool, "should buy bags") && npc->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
-    {
-        uint32 smallestBagSize = UINT32_MAX;
-        for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
-        {
-            Bag const* equippedBag = static_cast<Bag const*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag));
-            smallestBagSize = std::min(smallestBagSize, equippedBag ? equippedBag->GetBagSize() : 0u);
-        }
-
-        if (VendorItemData const* items = npc->GetVendorItems())
-        {
-            for (VendorItem const* item : items->m_items)
-            {
-                ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item->item);
-                if (itemTemplate && itemTemplate->Class == ITEM_CLASS_CONTAINER &&
-                    itemTemplate->SubClass == ITEM_SUBCLASS_CONTAINER && itemTemplate->ContainerSlots > smallestBagSize)
-                    return true;
-            }
-        }
-    }
+    if (AI_VALUE(bool, "should buy bags") && CanBuyBagUpgradeAt(botAI, npc))
+        return true;
 
     if (AI_VALUE(bool, "can train") && AI_VALUE(uint32, "train cost") > 0 &&
         npc->HasNpcFlag(UNIT_NPC_FLAG_TRAINER_CLASS))

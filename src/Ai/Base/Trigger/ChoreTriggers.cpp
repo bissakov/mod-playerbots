@@ -6,6 +6,7 @@
 
 #include "ChoreTriggers.h"
 
+#include "MaintenanceValues.h"
 #include "Playerbots.h"
 
 bool VendorInRangeTrigger::IsActive()
@@ -39,5 +40,9 @@ bool BankerInRangeTrigger::IsActive()
 
 bool ShouldBuyBagsAtVendorTrigger::IsActive()
 {
-    return AI_VALUE(bool, "should buy bags") && AI_VALUE(ObjectGuid, "nearest vendor");
+    if (!AI_VALUE(bool, "should buy bags"))
+        return false;
+
+    Unit* unit = botAI->GetUnit(AI_VALUE(ObjectGuid, "nearest vendor"));
+    return CanBuyBagUpgradeAt(botAI, unit ? unit->ToCreature() : nullptr);
 }

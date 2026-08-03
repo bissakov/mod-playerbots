@@ -9,7 +9,10 @@
 
 #include "Value.h"
 
+class Creature;
 class PlayerbotAI;
+
+bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor);
 
 class CanMoveAroundValue : public BoolCalculatedValue
 {
