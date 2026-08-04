@@ -83,6 +83,10 @@ Unit* GrindTargetValue::FindTargetForGrinding(uint32 assistCount)
         return unit;
     }
 
+    // Recovery states suppress voluntary targets, but the attacker path above remains available.
+    if (botAI->IsResurrectionSicknessRecoveryActive() || botAI->IsInsideAvoidedArea())
+        return nullptr;
+
     GuidVector targets = *context->GetValue<GuidVector>("possible targets");
     if (targets.empty())
         return nullptr;

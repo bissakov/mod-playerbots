@@ -604,6 +604,7 @@ public:
     std::string const getName() override { return "QuestTravelDestination"; }
     int32 getEntry() override { return 0; }
     std::string const getTitle() override;
+    uint32 getQuestId() const { return questId; }
 
 protected:
     uint32 questId;
@@ -650,6 +651,7 @@ public:
     uint32 ReqCreature();
     uint32 ReqGOId();
     uint32 ReqCount();
+    uint32 getObjective() const { return objective; }
 
     bool isActive(Player* bot) override;
     std::string const getName() override { return "QuestObjectiveTravelDestination"; }
@@ -674,7 +676,7 @@ public:
     bool isActive(Player* bot) override;
     virtual CreatureTemplate const* GetCreatureTemplate();
     std::string const getName() override { return "RpgTravelDestination"; }
-    int32 getEntry() override { return 0; }
+    int32 getEntry() override { return entry; }
     std::string const getTitle() override;
 
 protected:

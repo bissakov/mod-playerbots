@@ -111,6 +111,77 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
     NewRpgInfo& info = botAI->rpgInfo;
     NewRpgStatus status = info.GetStatus();
 
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+    {
+        if (status == RPG_DO_ERRAND)
+        {
+            auto const& errand = std::get<NewRpgInfo::DoErrand>(info.data);
+            if (NeedsErrandAt(errand.npc))
+                return false;
+        }
+
+        if (ObjectGuid errandNpc = FindErrandNpc())
+        {
+            info.ChangeToDoErrand(errandNpc);
+            botAI->LogObjectiveReplacement("Resurrection Sickness service errand");
+            return true;
+        }
+
+        if (status == RPG_REST)
+            return false;
+
+        info.ChangeToRest();
+        bot->SetStandState(UNIT_STAND_STATE_SIT);
+        botAI->LogObjectiveReplacement("Resurrection Sickness rest");
+        return true;
+    }
+
+    if (botAI->IsInsideAvoidedArea())
+    {
+        if (auto const* grind = std::get_if<NewRpgInfo::GoGrind>(&info.data))
+        {
+            if (!botAI->IsPositionAvoided(FailedObjectiveType::Area, grind->pos))
+                return false;
+        }
+        else if (auto const* camp = std::get_if<NewRpgInfo::GoCamp>(&info.data))
+        {
+            if (!botAI->IsPositionAvoided(FailedObjectiveType::Area, camp->pos))
+                return false;
+        }
+
+        WorldPosition escape = SelectRandomGrindPos(bot);
+        if (escape != WorldPosition() && !botAI->IsPositionAvoided(FailedObjectiveType::Area, escape) &&
+            !botAI->IsPositionAvoided(FailedObjectiveType::Grind, escape))
+        {
+            info.ChangeToGoGrind(escape);
+            botAI->LogObjectiveReplacement("failed-area evacuation");
+            LOG_INFO("playerbots", "{} evacuating avoided area toward ({}, {:.1f}, {:.1f}, {:.1f})", bot->GetName(),
+                     escape.GetMapId(), escape.GetPositionX(), escape.GetPositionY(), escape.GetPositionZ());
+            return true;
+        }
+
+        escape = SelectRandomCampPos(bot);
+        if (escape != WorldPosition() && !botAI->IsPositionAvoided(FailedObjectiveType::Area, escape) &&
+            !botAI->IsPositionAvoided(FailedObjectiveType::Camp, escape))
+        {
+            info.ChangeToGoCamp(escape);
+            botAI->LogObjectiveReplacement("failed-area evacuation");
+            LOG_INFO("playerbots", "{} evacuating avoided area toward ({}, {:.1f}, {:.1f}, {:.1f})", bot->GetName(),
+                     escape.GetMapId(), escape.GetPositionX(), escape.GetPositionY(), escape.GetPositionZ());
+            return true;
+        }
+
+        if (status != RPG_WANDER_RANDOM)
+        {
+            info.ChangeToWanderRandom();
+            LOG_WARN("playerbots", "{} found no planned destination outside an avoided area; wandering out",
+                     bot->GetName());
+            return true;
+        }
+
+        return false;
+    }
+
     bool progressChecked = false;
     bool madeProgress = CheckProgress(progressChecked);
 
@@ -321,7 +392,10 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
 
 bool NewRpgGoGrindAction::Execute(Event /*event*/)
 {
-    if (SearchQuestGiverAndAcceptOrReward())
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
+    if (!botAI->IsInsideAvoidedArea() && SearchQuestGiverAndAcceptOrReward())
         return true;
     if (auto* data = std::get_if<NewRpgInfo::GoGrind>(&botAI->rpgInfo.data))
     {
@@ -338,7 +412,10 @@ bool NewRpgGoGrindAction::Execute(Event /*event*/)
 
 bool NewRpgGoCampAction::Execute(Event /*event*/)
 {
-    if (SearchQuestGiverAndAcceptOrReward())
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
+    if (!botAI->IsInsideAvoidedArea() && SearchQuestGiverAndAcceptOrReward())
         return true;
 
     if (auto* data = std::get_if<NewRpgInfo::GoCamp>(&botAI->rpgInfo.data))
@@ -353,6 +430,12 @@ bool NewRpgGoCampAction::Execute(Event /*event*/)
 
 bool NewRpgWanderRandomAction::Execute(Event /*event*/)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
+    if (botAI->IsInsideAvoidedArea())
+        return MoveRandomNear();
+
     if (SearchQuestGiverAndAcceptOrReward())
         return true;
 
@@ -361,6 +444,9 @@ bool NewRpgWanderRandomAction::Execute(Event /*event*/)
 
 bool NewRpgWanderNpcAction::Execute(Event /*event*/)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
     NewRpgInfo& info = botAI->rpgInfo;
     auto* dataPtr = std::get_if<NewRpgInfo::WanderNpc>(&info.data);
     if (!dataPtr)
@@ -442,6 +528,9 @@ bool NewRpgDoErrandAction::Execute(Event /*event*/)
 
 bool NewRpgDoQuestAction::Execute(Event /*event*/)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
     if (SearchQuestGiverAndAcceptOrReward())
         return true;
 
@@ -493,6 +582,7 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
             data.lastReachPOI = 0;
             data.pos = WorldPosition();
             data.objectiveIdx = 0;
+            data.siteId = 0;
         }
     }
     if (data.pos == WorldPosition())
@@ -509,6 +599,7 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
         data.lastReachPOI = 0;
         data.pos = poiInfo[rndIdx].pos;
         data.objectiveIdx = objectiveIdx;
+        data.siteId = poiInfo[rndIdx].siteId;
 
         if (data.pos.GetMapId() != bot->GetMapId() || GetPositionZoneId(data.pos) != bot->GetZoneId())
         {
@@ -570,6 +661,7 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
         data.lastReachPOI = 0;
         data.pos = WorldPosition();
         data.objectiveIdx = 0;
+        data.siteId = 0;
         return true;
     }
 
@@ -601,6 +693,7 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
         data.lastReachPOI = 0;
         data.pos = poiInfo[0].pos;
         data.objectiveIdx = -1;
+        data.siteId = poiInfo[0].siteId;
 
         if (data.pos.GetMapId() != bot->GetMapId() || GetPositionZoneId(data.pos) != bot->GetZoneId())
         {
@@ -644,6 +737,9 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
 
 bool NewRpgTravelFlightAction::Execute(Event /*event*/)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
     NewRpgInfo& info = botAI->rpgInfo;
     auto* dataPtr = std::get_if<NewRpgInfo::TravelFlight>(&info.data);
     if (!dataPtr)
@@ -696,6 +792,9 @@ bool NewRpgTravelFlightAction::Execute(Event /*event*/)
 
 bool NewRpgTravelZoneAction::Execute(Event /*event*/)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
     auto* data = std::get_if<NewRpgInfo::TravelZone>(&botAI->rpgInfo.data);
     if (!data)
         return false;

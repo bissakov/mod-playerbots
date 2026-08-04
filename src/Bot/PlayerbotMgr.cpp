@@ -534,6 +534,7 @@ void PlayerbotHolder::OnBotLogin(Player* const bot)
         botAI->ResetStrategies(!sRandomPlayerbotMgr.IsRandomBot(bot));
     }
     PlayerbotRepository::instance().Load(botAI);
+    botAI->LoadFailedObjectives();
 
     if (master && !master->HasUnitState(UNIT_STATE_IN_FLIGHT))
     {

@@ -32,6 +32,8 @@ bool ChooseTravelTargetAction::Execute(Event /*event*/)
         return false;
 
     setNewTarget(&newTarget, oldTarget);
+    if (newTarget.getDestination())
+        botAI->LogObjectiveReplacement(newTarget.getDestination()->getTitle());
     return true;
 }
 
@@ -42,6 +44,19 @@ bool ChooseTravelTargetAction::Execute(Event /*event*/)
 // Eventually we want to rewrite this to be more intelligent.
 void ChooseTravelTargetAction::getNewTarget(TravelTarget* newTarget, TravelTarget* oldTarget)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+    {
+        bool const needsService = (AI_VALUE(bool, "should sell") && AI_VALUE(bool, "can sell")) ||
+                                  (AI_VALUE(bool, "should repair") && AI_VALUE(bool, "can repair")) ||
+                                  AI_VALUE(bool, "should buy bags") || AI_VALUE(bool, "should bank") ||
+                                  (AI_VALUE(bool, "can train") && AI_VALUE(uint32, "train cost") > 0);
+        if (needsService && SetRpgTarget(newTarget))
+            return;
+
+        SetNullTarget(newTarget);
+        return;
+    }
+
     // Join groups members
     bool foundTarget = foundTarget = SetGroupTarget(newTarget);
 
@@ -353,30 +368,67 @@ void ChooseTravelTargetAction::ReportTravelTarget(TravelTarget* newTarget, Trave
 bool ChooseTravelTargetAction::getBestDestination(std::vector<TravelDestination*>* activeDestinations,
                                                   std::vector<WorldPosition*>* activePoints)
 {
-    if (activeDestinations->empty() || activePoints->empty())  // No targets or no points.
+    if (activeDestinations->empty())
         return false;
 
+    struct DestinationPoint
+    {
+        TravelDestination* destination;
+        WorldPosition* point;
+    };
+
     WorldPosition botLocation(bot);
+    std::vector<DestinationPoint> candidates;
+    if (activePoints->empty())
+    {
+        for (TravelDestination* destination : *activeDestinations)
+        {
+            for (WorldPosition* point : destination->nextPoint(&botLocation))
+            {
+                if (!botAI->IsTravelDestinationAvoided(destination, point))
+                    candidates.push_back({destination, point});
+            }
+        }
+    }
+    else
+    {
+        for (WorldPosition* point : *activePoints)
+        {
+            for (TravelDestination* destination : *activeDestinations)
+            {
+                if (destination->distanceTo(point) == 0 && !botAI->IsTravelDestinationAvoided(destination, point))
+                {
+                    candidates.push_back({destination, point});
+                }
+            }
+        }
+    }
+
+    if (candidates.empty())
+        return false;
+
+    std::vector<WorldPosition*> candidatePoints;
+    candidatePoints.reserve(candidates.size());
+    for (DestinationPoint const& candidate : candidates)
+        candidatePoints.push_back(candidate.point);
+
     std::vector<WorldPosition*> availablePoints =
-        TravelMgr::instance().getNextPoint(&botLocation, *activePoints);  // Pick a good point.
+        TravelMgr::instance().getNextPoint(&botLocation, candidatePoints);  // Pick a good point.
 
     if (availablePoints.empty())  // No points available.
         return false;
 
-    TravelDestination* targetDestination;
-
-    for (auto activeTarget : *activeDestinations)  // Pick the destination that has this point.
-        if (activeTarget->distanceTo(availablePoints.front()) == 0)
-            targetDestination = activeTarget;
-
-    if (!targetDestination)
+    auto const selected =
+        std::find_if(candidates.begin(), candidates.end(), [&availablePoints](DestinationPoint const& candidate)
+                     { return candidate.point == availablePoints.front(); });
+    if (selected == candidates.end())
         return false;
 
     activeDestinations->clear();
     activePoints->clear();
 
-    activeDestinations->push_back(targetDestination);
-    activePoints->push_back(availablePoints.front());
+    activeDestinations->push_back(selected->destination);
+    activePoints->push_back(selected->point);
 
     return true;
 }
@@ -456,6 +508,9 @@ bool ChooseTravelTargetAction::SetCurrentTarget(TravelTarget* target, TravelTarg
         return false;
 
     if (!oldDestination->isActive(bot))  // Is the destination still valid?
+        return false;
+
+    if (botAI->IsTravelDestinationAvoided(oldDestination, oldTarget->getPosition()))
         return false;
 
     WorldPosition botLocation(bot);

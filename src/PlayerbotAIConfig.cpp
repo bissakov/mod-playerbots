@@ -695,6 +695,14 @@ bool PlayerbotAIConfig::Initialize()
     autoPickTalents = sConfigMgr->GetOption<bool>("AiPlayerbot.AutoPickTalents", true);
     autoUpgradeEquip = sConfigMgr->GetOption<bool>("AiPlayerbot.AutoUpgradeEquip", true);
     organicProgression = sConfigMgr->GetOption<bool>("AiPlayerbot.OrganicProgression", false);
+    failedObjectiveAvoidance = sConfigMgr->GetOption<bool>("AiPlayerbot.FailedObjectiveAvoidance", true);
+    resurrectionSicknessRecovery = sConfigMgr->GetOption<bool>("AiPlayerbot.ResurrectionSicknessRecovery", true);
+    failedObjectiveDeathThreshold =
+        std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AiPlayerbot.FailedObjectiveDeathThreshold", 2));
+    failedObjectiveFailureWindow =
+        sConfigMgr->GetOption<uint32>("AiPlayerbot.FailedObjectiveFailureWindow", 30 * MINUTE);
+    failedObjectiveSiteRadius =
+        std::max(20.0f, sConfigMgr->GetOption<float>("AiPlayerbot.FailedObjectiveSiteRadius", 120.0f));
     hunterWolfPet = sConfigMgr->GetOption<int32>("AiPlayerbot.HunterWolfPet", 0);
     defaultPetStance = sConfigMgr->GetOption<int32>("AiPlayerbot.DefaultPetStance", 1);
     petChatCommandDebug = sConfigMgr->GetOption<bool>("AiPlayerbot.PetChatCommandDebug", 0);

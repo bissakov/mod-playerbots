@@ -11,24 +11,25 @@
 #include <numeric>
 
 #include "AreaDefines.h"
+#include "CellImpl.h"
+#include "ChatHelper.h"
+#include "Corpse.h"
 #include "Creature.h"
 #include "Log.h"
-#include "ObjectAccessor.h"
-#include "TravelNode.h"
-#include "Talentspec.h"
-#include "ChatHelper.h"
+#include "MaintenanceValues.h"
+#include "Map.h"
 #include "MapCollisionData.h"
 #include "MapMgr.h"
+#include "ObjectAccessor.h"
 #include "PathGenerator.h"
 #include "Playerbots.h"
 #include "RaceMgr.h"
+#include "Talentspec.h"
 #include "Transport.h"
 #include "TransportMgr.h"
+#include "TravelNode.h"
 #include "VMapFactory.h"
 #include "VMapMgr2.h"
-#include "Map.h"
-#include "Corpse.h"
-#include "CellImpl.h"
 
 // Navigation data
 
@@ -1307,6 +1308,24 @@ bool RpgTravelDestination::isActive(Player* bot)
     if (cInfo->npcflag & UNIT_NPC_FLAG_REPAIR)
         if (AI_VALUE2_LAZY(bool, "group or", "should repair,can repair,following party,near leader"))
             isUsefull = true;
+
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+    {
+        if ((cInfo->npcflag & UNIT_NPC_FLAG_VENDOR) && AI_VALUE(bool, "should buy bags") &&
+            CanBuyBagUpgradeAt(botAI, entry))
+            isUsefull = true;
+
+        if ((cInfo->npcflag & UNIT_NPC_FLAG_BANKER) && AI_VALUE(bool, "should bank"))
+            isUsefull = true;
+
+        if ((cInfo->npcflag & UNIT_NPC_FLAG_TRAINER_CLASS) && AI_VALUE(bool, "can train") &&
+            AI_VALUE(uint32, "train cost") > 0)
+        {
+            Trainer::Trainer const* trainer = sObjectMgr->GetTrainer(entry);
+            if (trainer && trainer->GetTrainerType() == Trainer::Type::Class && trainer->IsTrainerValidForPlayer(bot))
+                isUsefull = true;
+        }
+    }
 
     if (!isUsefull)
         return false;

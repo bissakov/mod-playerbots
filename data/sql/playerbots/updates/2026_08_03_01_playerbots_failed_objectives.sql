@@ -1,0 +1,28 @@
+CREATE TABLE IF NOT EXISTS `playerbots_failed_objectives` (
+    `bot` INT UNSIGNED NOT NULL,
+    `objective_type` TINYINT UNSIGNED NOT NULL,
+    `quest_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `objective` SMALLINT NOT NULL DEFAULT -1,
+    `entry` INT NOT NULL DEFAULT 0,
+    `map_id` SMALLINT UNSIGNED NOT NULL,
+    `site_id` INT UNSIGNED NOT NULL,
+    `site_x` FLOAT NOT NULL,
+    `site_y` FLOAT NOT NULL,
+    `site_z` FLOAT NOT NULL,
+    `failed_level` TINYINT UNSIGNED NOT NULL,
+    `failure_count` INT UNSIGNED NOT NULL DEFAULT 1,
+    `first_failure` INT UNSIGNED NOT NULL,
+    `last_failure` INT UNSIGNED NOT NULL,
+    `avoided` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    `death_map` SMALLINT UNSIGNED NOT NULL,
+    `death_zone` SMALLINT UNSIGNED NOT NULL,
+    `death_x` FLOAT NOT NULL,
+    `death_y` FLOAT NOT NULL,
+    `death_z` FLOAT NOT NULL,
+    `killer_entry` INT UNSIGNED NOT NULL DEFAULT 0,
+    `killer_spawn` INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY
+        (`bot`, `objective_type`, `quest_id`, `objective`, `entry`, `map_id`, `site_id`, `failed_level`),
+    KEY `idx_avoided_level` (`avoided`, `failed_level`),
+    KEY `idx_last_failure` (`last_failure`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

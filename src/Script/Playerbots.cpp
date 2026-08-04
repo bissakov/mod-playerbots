@@ -68,13 +68,14 @@ class PlayerbotsPlayerScript : public PlayerScript
 {
 public:
     PlayerbotsPlayerScript()
-        : PlayerScript(
-              "PlayerbotsPlayerScript",
-              {PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_PLAYER_JUST_DIED, PLAYERHOOK_ON_PLAYER_RELEASED_GHOST,
-               PLAYERHOOK_ON_PLAYER_RESURRECT, PLAYERHOOK_ON_AFTER_UPDATE, PLAYERHOOK_ON_BEFORE_CRITERIA_PROGRESS,
-               PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
-               PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT, PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
-               PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT, PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_BEFORE_TELEPORT})
+        : PlayerScript("PlayerbotsPlayerScript",
+                       {PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_PLAYER_JUST_DIED, PLAYERHOOK_ON_PLAYER_KILLED_BY_CREATURE,
+                        PLAYERHOOK_ON_LEVEL_CHANGED, PLAYERHOOK_ON_PLAYER_COMPLETE_QUEST, PLAYERHOOK_ON_QUEST_ABANDON,
+                        PLAYERHOOK_ON_PLAYER_RELEASED_GHOST, PLAYERHOOK_ON_PLAYER_RESURRECT, PLAYERHOOK_ON_AFTER_UPDATE,
+                        PLAYERHOOK_ON_BEFORE_CRITERIA_PROGRESS, PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE,
+                        PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT,
+                        PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT, PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT,
+                        PLAYERHOOK_ON_GIVE_EXP, PLAYERHOOK_ON_BEFORE_TELEPORT})
     {
     }
 
@@ -90,6 +91,45 @@ public:
         statement->SetData(2, player->GetMapId());
         statement->SetData(3, player->GetZoneId());
         PlayerbotsDatabase.Execute(statement);
+
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+            botAI->RecordObjectiveFailure();
+    }
+
+    void OnPlayerKilledByCreature(Creature* killer, Player* killed) override
+    {
+        if (!IsTrackedRandomBot(killed) || !killer)
+            return;
+
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(killed))
+            botAI->SetObjectiveFailureKiller(killer->GetEntry(), killer->GetSpawnId());
+    }
+
+    void OnPlayerLevelChanged(Player* player, uint8 oldLevel) override
+    {
+        if (!IsTrackedRandomBot(player))
+            return;
+
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+            botAI->ClearFailedObjectivesForLevel(oldLevel);
+    }
+
+    void OnPlayerCompleteQuest(Player* player, Quest const* quest) override
+    {
+        if (!IsTrackedRandomBot(player) || !quest)
+            return;
+
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+            botAI->ClearFailedObjectivesForQuest(quest->GetQuestId(), "completed");
+    }
+
+    void OnPlayerQuestAbandon(Player* player, uint32 questId) override
+    {
+        if (!IsTrackedRandomBot(player))
+            return;
+
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(player))
+            botAI->ClearFailedObjectivesForQuest(questId, "abandoned");
     }
 
     void OnPlayerReleasedGhost(Player* player) override

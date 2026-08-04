@@ -377,6 +377,11 @@ public:
     bool autoPickTalents;
     bool autoUpgradeEquip;
     bool organicProgression;
+    bool failedObjectiveAvoidance;
+    bool resurrectionSicknessRecovery;
+    uint32 failedObjectiveDeathThreshold;
+    uint32 failedObjectiveFailureWindow;
+    float failedObjectiveSiteRadius;
     int32 hunterWolfPet;
     int32 defaultPetStance;
     int32 petChatCommandDebug;

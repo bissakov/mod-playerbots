@@ -265,6 +265,45 @@ enum ActivityType
     MAX_ACTIVITY_TYPE
 };
 
+enum class FailedObjectiveType : uint8
+{
+    Area = 0,
+    QuestObjective = 1,
+    QuestRelation = 2,
+    Grind = 3,
+    Rpg = 4,
+    Explore = 5,
+    Camp = 6,
+    OutdoorPvp = 7,
+    ZoneTravel = 8,
+    Boss = 9
+};
+
+struct FailedObjectiveRecord
+{
+    FailedObjectiveType type{FailedObjectiveType::Area};
+    uint32 questId{0};
+    int32 objective{-1};
+    int32 entry{0};
+    uint32 mapId{0};
+    uint32 siteId{0};
+    float siteX{0.0f};
+    float siteY{0.0f};
+    float siteZ{0.0f};
+    uint8 failedLevel{0};
+    uint32 failureCount{0};
+    uint32 firstFailure{0};
+    uint32 lastFailure{0};
+    uint32 deathMap{0};
+    uint32 deathZone{0};
+    float deathX{0.0f};
+    float deathY{0.0f};
+    float deathZ{0.0f};
+    uint32 killerEntry{0};
+    uint32 killerSpawn{0};
+    bool avoided{false};
+};
+
 enum BotRoles : uint8
 {
     BOT_ROLE_NONE = 0x00,
@@ -556,6 +595,22 @@ public:
     bool AllowActivity(ActivityType activityType = ALL_ACTIVITY, bool checkNow = false);
     uint32 AutoScaleActivity(uint32 mod);
 
+    bool IsAutonomousRandomBot() const;
+    bool IsResurrectionSicknessRecoveryActive() const;
+    void UpdateResurrectionSicknessRecovery();
+    void LoadFailedObjectives();
+    void RecordObjectiveFailure(uint32 killerEntry = 0, uint32 killerSpawn = 0);
+    void SetObjectiveFailureKiller(uint32 killerEntry, uint32 killerSpawn);
+    void ClearFailedObjectivesForQuest(uint32 questId, std::string const& reason);
+    void ClearFailedObjectivesForLevel(uint8 oldLevel);
+    bool IsQuestObjectiveAvoided(uint32 questId, int32 objective, uint32 siteId, WorldPosition const& position) const;
+    bool IsPositionAvoided(FailedObjectiveType type, WorldPosition const& position, int32 entry = 0,
+                           uint32 questId = 0) const;
+    bool IsInsideAvoidedArea() const;
+    bool IsTravelDestinationAvoided(TravelDestination* destination, WorldPosition const* position) const;
+    void LogObjectiveReplacement(std::string const& replacement);
+    void ClearVoluntaryTargets();
+
     // Check if player is safe to use.
     bool IsSafe(Player* player);
     bool IsSafe(WorldObject* obj);
@@ -654,6 +709,17 @@ protected:
     Position jumpDestination = Position();
     uint32 nextTransportCheck = 0;
     bool spellInterruptRequested = false;
+    bool resurrectionRecoveryInitialized = false;
+    bool pendingObjectiveReplacementLog = false;
+    uint32 pendingObjectiveFailureKillerEntry = 0;
+    uint32 pendingObjectiveFailureKillerSpawn = 0;
+    std::vector<FailedObjectiveRecord> failedObjectives;
+
+    FailedObjectiveRecord BuildCurrentObjectiveFailure() const;
+    bool IsSameFailedObjective(FailedObjectiveRecord const& left, FailedObjectiveRecord const& right) const;
+    bool IsFailedObjectiveAvoided(FailedObjectiveRecord const& objective) const;
+    void PersistFailedObjective(FailedObjectiveRecord const& objective) const;
+    void DeleteFailedObjective(FailedObjectiveRecord const& objective) const;
 };
 
 #endif

@@ -23,6 +23,7 @@ struct POIInfo
 {
     WorldPosition pos;
     int32 objectiveIdx;
+    uint32 siteId;
 };
 
 enum class MoveFarOutcome : uint8

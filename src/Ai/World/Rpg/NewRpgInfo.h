@@ -74,6 +74,7 @@ struct NewRpgInfo
         const Quest* quest{nullptr};
         uint32 questId{0};
         int32 objectiveIdx{0};
+        uint32 siteId{0};
         WorldPosition pos{};
         uint32 lastReachPOI{0};
     };

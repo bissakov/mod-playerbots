@@ -10,6 +10,9 @@
 
 bool NewRpgOutdoorPvpAction::Execute(Event)
 {
+    if (botAI->IsResurrectionSicknessRecoveryActive())
+        return false;
+
     if (!bot->IsPvP())
     {
         botAI->rpgInfo.ChangeToIdle();

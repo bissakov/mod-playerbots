@@ -1481,6 +1481,9 @@ void PlayerbotAI::DoNextAction(bool min)
 
     // Change engine if just died
     bool isBotAlive = bot->IsAlive();
+    if (isBotAlive)
+        UpdateResurrectionSicknessRecovery();
+
     if (currentEngine != engines[BOT_STATE_DEAD] && !isBotAlive)
     {
         // Death Count to prevent skeleton piles
@@ -4598,6 +4601,530 @@ bool PlayerbotAI::HasPlayerNearby(float range)
     WorldPosition botPos(bot);
     return HasPlayerNearby(&botPos, range);
 };
+
+namespace
+{
+constexpr uint32 RESURRECTION_SICKNESS_SPELL = 15007;
+
+uint32 MakeObjectiveSiteId(WorldPosition const& position)
+{
+    float const cellSize = sPlayerbotAIConfig.failedObjectiveSiteRadius;
+    int32 const cellX = static_cast<int32>(std::floor(position.GetPositionX() / cellSize));
+    int32 const cellY = static_cast<int32>(std::floor(position.GetPositionY() / cellSize));
+    uint64 hash = 1469598103934665603ULL;
+    auto add = [&hash](uint32 value)
+    {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    };
+    add(position.GetMapId());
+    add(static_cast<uint32>(cellX));
+    add(static_cast<uint32>(cellY));
+    return static_cast<uint32>(hash ^ (hash >> 32));
+}
+
+char const* FailedObjectiveTypeName(FailedObjectiveType type)
+{
+    switch (type)
+    {
+        case FailedObjectiveType::QuestObjective:
+            return "quest_objective";
+        case FailedObjectiveType::QuestRelation:
+            return "quest_relation";
+        case FailedObjectiveType::Grind:
+            return "grind";
+        case FailedObjectiveType::Rpg:
+            return "rpg";
+        case FailedObjectiveType::Explore:
+            return "explore";
+        case FailedObjectiveType::Camp:
+            return "camp";
+        case FailedObjectiveType::OutdoorPvp:
+            return "outdoor_pvp";
+        case FailedObjectiveType::ZoneTravel:
+            return "zone_travel";
+        case FailedObjectiveType::Boss:
+            return "boss";
+        case FailedObjectiveType::Area:
+        default:
+            return "area";
+    }
+}
+}  // namespace
+
+bool PlayerbotAI::IsAutonomousRandomBot() const
+{
+    return bot && sRandomPlayerbotMgr.IsRandomBot(bot) && (!master || GET_PLAYERBOT_AI(master));
+}
+
+bool PlayerbotAI::IsResurrectionSicknessRecoveryActive() const
+{
+    return sPlayerbotAIConfig.resurrectionSicknessRecovery && IsAutonomousRandomBot() && bot->IsAlive() &&
+           bot->HasAura(RESURRECTION_SICKNESS_SPELL);
+}
+
+void PlayerbotAI::ClearVoluntaryTargets()
+{
+    TravelTarget* travelTarget = aiObjectContext->GetValue<TravelTarget*>("travel target")->Get();
+    if (travelTarget)
+    {
+        travelTarget->setStatus(TRAVEL_STATUS_EXPIRED);
+        travelTarget->setExpireIn(1);
+    }
+
+    aiObjectContext->GetValue<GuidVector>("prioritized targets")->Reset();
+    aiObjectContext->GetValue<ObjectGuid>("pull target")->Set(ObjectGuid::Empty);
+    aiObjectContext->GetValue<ObjectGuid>("pull strategy target")->Set(ObjectGuid::Empty);
+    aiObjectContext->GetValue<GuidPosition>("rpg target")->Set(GuidPosition());
+    aiObjectContext->GetValue<Unit*>("grind target")->Reset();
+    aiObjectContext->GetValue<LootObject>("loot target")->Set(LootObject());
+}
+
+void PlayerbotAI::UpdateResurrectionSicknessRecovery()
+{
+    bool const active = IsResurrectionSicknessRecoveryActive();
+    if (active && !resurrectionRecoveryInitialized)
+    {
+        ClearVoluntaryTargets();
+        rpgInfo.ChangeToIdle();
+        resurrectionRecoveryInitialized = true;
+        LOG_INFO("playerbots", "{} entered Resurrection Sickness recovery mode", bot->GetName());
+    }
+    else if (!active && resurrectionRecoveryInitialized)
+    {
+        resurrectionRecoveryInitialized = false;
+        rpgInfo.ChangeToIdle();
+        LOG_INFO("playerbots", "{} left Resurrection Sickness recovery mode", bot->GetName());
+    }
+}
+
+FailedObjectiveRecord PlayerbotAI::BuildCurrentObjectiveFailure() const
+{
+    FailedObjectiveRecord record;
+    record.failedLevel = bot->GetLevel();
+
+    auto setPosition = [&record](WorldPosition const& position, uint32 stableSiteId = 0)
+    {
+        record.mapId = position.GetMapId();
+        record.siteX = position.GetPositionX();
+        record.siteY = position.GetPositionY();
+        record.siteZ = position.GetPositionZ();
+        record.siteId = stableSiteId ? stableSiteId : MakeObjectiveSiteId(position);
+    };
+
+    if (auto const* quest = std::get_if<NewRpgInfo::DoQuest>(&rpgInfo.data))
+    {
+        if (quest->questId && quest->pos != WorldPosition())
+        {
+            record.type = FailedObjectiveType::QuestObjective;
+            record.questId = quest->questId;
+            record.objective = quest->objectiveIdx;
+            setPosition(quest->pos, quest->siteId);
+            return record;
+        }
+    }
+    else if (auto const* travel = std::get_if<NewRpgInfo::TravelZone>(&rpgInfo.data))
+    {
+        record.type = FailedObjectiveType::ZoneTravel;
+        record.questId = travel->resumeQuestId;
+        setPosition(travel->destination);
+        return record;
+    }
+    else if (auto const* grind = std::get_if<NewRpgInfo::GoGrind>(&rpgInfo.data))
+    {
+        record.type = FailedObjectiveType::Grind;
+        setPosition(grind->pos);
+        return record;
+    }
+    else if (auto const* camp = std::get_if<NewRpgInfo::GoCamp>(&rpgInfo.data))
+    {
+        record.type = FailedObjectiveType::Camp;
+        setPosition(camp->pos);
+        return record;
+    }
+    else if (std::holds_alternative<NewRpgInfo::OutdoorPvP>(rpgInfo.data))
+    {
+        record.type = FailedObjectiveType::OutdoorPvp;
+        record.entry = bot->GetZoneId();
+        setPosition(WorldPosition(bot));
+        return record;
+    }
+
+    TravelTarget* target = aiObjectContext->GetValue<TravelTarget*>("travel target")->Get();
+    TravelDestination* destination = target ? target->getDestination() : nullptr;
+    WorldPosition* position = target ? target->getPosition() : nullptr;
+    if (destination && position && destination->getName() != "NullTravelDestination")
+    {
+        record.entry = destination->getEntry();
+        setPosition(*position);
+
+        if (auto* objective = dynamic_cast<QuestObjectiveTravelDestination*>(destination))
+        {
+            record.type = FailedObjectiveType::QuestObjective;
+            record.questId = objective->getQuestId();
+            record.objective = objective->getObjective();
+        }
+        else if (auto* relation = dynamic_cast<QuestRelationTravelDestination*>(destination))
+        {
+            record.type = FailedObjectiveType::QuestRelation;
+            record.questId = relation->getQuestId();
+            record.objective = static_cast<int32>(relation->getRelation());
+        }
+        else if (dynamic_cast<GrindTravelDestination*>(destination))
+            record.type = FailedObjectiveType::Grind;
+        else if (dynamic_cast<RpgTravelDestination*>(destination))
+            record.type = FailedObjectiveType::Rpg;
+        else if (auto* explore = dynamic_cast<ExploreTravelDestination*>(destination))
+        {
+            record.type = FailedObjectiveType::Explore;
+            record.entry = explore->getAreaId();
+        }
+        else if (dynamic_cast<BossTravelDestination*>(destination))
+            record.type = FailedObjectiveType::Boss;
+
+        return record;
+    }
+
+    setPosition(WorldPosition(bot));
+    return record;
+}
+
+bool PlayerbotAI::IsSameFailedObjective(FailedObjectiveRecord const& left, FailedObjectiveRecord const& right) const
+{
+    if (left.type != right.type || left.questId != right.questId || left.objective != right.objective ||
+        left.entry != right.entry || left.mapId != right.mapId || left.failedLevel != right.failedLevel)
+        return false;
+
+    if (left.siteId == right.siteId)
+        return true;
+
+    float const dx = left.siteX - right.siteX;
+    float const dy = left.siteY - right.siteY;
+    float const radius = sPlayerbotAIConfig.failedObjectiveSiteRadius;
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+bool PlayerbotAI::IsFailedObjectiveAvoided(FailedObjectiveRecord const& objective) const
+{
+    for (FailedObjectiveRecord const& failed : failedObjectives)
+    {
+        if (!failed.avoided || failed.failedLevel != bot->GetLevel())
+            continue;
+
+        if (failed.type == FailedObjectiveType::Area && failed.mapId == objective.mapId)
+        {
+            float const dx = failed.siteX - objective.siteX;
+            float const dy = failed.siteY - objective.siteY;
+            float const radius = sPlayerbotAIConfig.failedObjectiveSiteRadius;
+            if (dx * dx + dy * dy <= radius * radius)
+                return true;
+        }
+
+        if (IsSameFailedObjective(failed, objective))
+            return true;
+    }
+    return false;
+}
+
+bool PlayerbotAI::IsQuestObjectiveAvoided(uint32 questId, int32 objective, uint32 siteId,
+                                          WorldPosition const& position) const
+{
+    if (!sPlayerbotAIConfig.failedObjectiveAvoidance || !IsAutonomousRandomBot())
+        return false;
+
+    FailedObjectiveRecord candidate;
+    candidate.type = FailedObjectiveType::QuestObjective;
+    candidate.questId = questId;
+    candidate.objective = objective;
+    candidate.mapId = position.GetMapId();
+    candidate.siteId = siteId ? siteId : MakeObjectiveSiteId(position);
+    candidate.siteX = position.GetPositionX();
+    candidate.siteY = position.GetPositionY();
+    candidate.siteZ = position.GetPositionZ();
+    candidate.failedLevel = bot->GetLevel();
+    return IsFailedObjectiveAvoided(candidate);
+}
+
+bool PlayerbotAI::IsPositionAvoided(FailedObjectiveType type, WorldPosition const& position, int32 entry,
+                                    uint32 questId) const
+{
+    if (!sPlayerbotAIConfig.failedObjectiveAvoidance || !IsAutonomousRandomBot())
+        return false;
+
+    FailedObjectiveRecord candidate;
+    candidate.type = type;
+    candidate.questId = questId;
+    candidate.entry = entry;
+    candidate.mapId = position.GetMapId();
+    candidate.siteId = MakeObjectiveSiteId(position);
+    candidate.siteX = position.GetPositionX();
+    candidate.siteY = position.GetPositionY();
+    candidate.siteZ = position.GetPositionZ();
+    candidate.failedLevel = bot->GetLevel();
+    return IsFailedObjectiveAvoided(candidate);
+}
+
+bool PlayerbotAI::IsInsideAvoidedArea() const
+{
+    return IsPositionAvoided(FailedObjectiveType::Area, WorldPosition(bot));
+}
+
+bool PlayerbotAI::IsTravelDestinationAvoided(TravelDestination* destination, WorldPosition const* position) const
+{
+    if (!sPlayerbotAIConfig.failedObjectiveAvoidance || !IsAutonomousRandomBot() || !destination || !position)
+        return false;
+
+    FailedObjectiveRecord candidate;
+    candidate.entry = destination->getEntry();
+    candidate.mapId = position->GetMapId();
+    candidate.siteId = MakeObjectiveSiteId(*position);
+    candidate.siteX = position->GetPositionX();
+    candidate.siteY = position->GetPositionY();
+    candidate.siteZ = position->GetPositionZ();
+    candidate.failedLevel = bot->GetLevel();
+
+    if (auto* objective = dynamic_cast<QuestObjectiveTravelDestination*>(destination))
+    {
+        candidate.type = FailedObjectiveType::QuestObjective;
+        candidate.questId = objective->getQuestId();
+        candidate.objective = objective->getObjective();
+    }
+    else if (auto* relation = dynamic_cast<QuestRelationTravelDestination*>(destination))
+    {
+        candidate.type = FailedObjectiveType::QuestRelation;
+        candidate.questId = relation->getQuestId();
+        candidate.objective = static_cast<int32>(relation->getRelation());
+    }
+    else if (dynamic_cast<GrindTravelDestination*>(destination))
+        candidate.type = FailedObjectiveType::Grind;
+    else if (dynamic_cast<RpgTravelDestination*>(destination))
+        candidate.type = FailedObjectiveType::Rpg;
+    else if (auto* explore = dynamic_cast<ExploreTravelDestination*>(destination))
+    {
+        candidate.type = FailedObjectiveType::Explore;
+        candidate.entry = explore->getAreaId();
+    }
+    else if (dynamic_cast<BossTravelDestination*>(destination))
+        candidate.type = FailedObjectiveType::Boss;
+
+    return IsFailedObjectiveAvoided(candidate);
+}
+
+void PlayerbotAI::PersistFailedObjective(FailedObjectiveRecord const& record) const
+{
+    PlayerbotsDatabase.Execute(
+        "INSERT INTO playerbots_failed_objectives "
+        "(bot, objective_type, quest_id, objective, entry, map_id, site_id, site_x, site_y, site_z, failed_level, "
+        "failure_count, first_failure, last_failure, avoided, death_map, death_zone, death_x, death_y, death_z, "
+        "killer_entry, killer_spawn) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, "
+        "{}, {}, {}, {}, {}) ON DUPLICATE KEY UPDATE failure_count=VALUES(failure_count), "
+        "first_failure=VALUES(first_failure), last_failure=VALUES(last_failure), avoided=VALUES(avoided), "
+        "death_map=VALUES(death_map), death_zone=VALUES(death_zone), death_x=VALUES(death_x), "
+        "death_y=VALUES(death_y), death_z=VALUES(death_z), killer_entry=VALUES(killer_entry), "
+        "killer_spawn=VALUES(killer_spawn)",
+        bot->GetGUID().GetCounter(), static_cast<uint32>(record.type), record.questId, record.objective, record.entry,
+        record.mapId, record.siteId, record.siteX, record.siteY, record.siteZ, record.failedLevel, record.failureCount,
+        record.firstFailure, record.lastFailure, record.avoided ? 1 : 0, record.deathMap, record.deathZone,
+        record.deathX, record.deathY, record.deathZ, record.killerEntry, record.killerSpawn);
+}
+
+void PlayerbotAI::DeleteFailedObjective(FailedObjectiveRecord const& record) const
+{
+    PlayerbotsDatabase.Execute(
+        "DELETE FROM playerbots_failed_objectives WHERE bot={} AND objective_type={} AND quest_id={} AND "
+        "objective={} AND entry={} AND map_id={} AND site_id={} AND failed_level={}",
+        bot->GetGUID().GetCounter(), static_cast<uint32>(record.type), record.questId, record.objective, record.entry,
+        record.mapId, record.siteId, record.failedLevel);
+}
+
+void PlayerbotAI::LoadFailedObjectives()
+{
+    failedObjectives.clear();
+    if (!sPlayerbotAIConfig.failedObjectiveAvoidance || !IsAutonomousRandomBot())
+        return;
+
+    QueryResult result = PlayerbotsDatabase.Query(
+        "SELECT objective_type, quest_id, objective, entry, map_id, site_id, site_x, site_y, site_z, failed_level, "
+        "failure_count, first_failure, last_failure, avoided, death_map, death_zone, death_x, death_y, death_z, "
+        "killer_entry, killer_spawn FROM playerbots_failed_objectives WHERE bot={}",
+        bot->GetGUID().GetCounter());
+    if (!result)
+        return;
+
+    do
+    {
+        Field* fields = result->Fetch();
+        FailedObjectiveRecord record;
+        record.type = static_cast<FailedObjectiveType>(fields[0].Get<uint8>());
+        record.questId = fields[1].Get<uint32>();
+        record.objective = fields[2].Get<int32>();
+        record.entry = fields[3].Get<int32>();
+        record.mapId = fields[4].Get<uint32>();
+        record.siteId = fields[5].Get<uint32>();
+        record.siteX = fields[6].Get<float>();
+        record.siteY = fields[7].Get<float>();
+        record.siteZ = fields[8].Get<float>();
+        record.failedLevel = fields[9].Get<uint8>();
+        record.failureCount = fields[10].Get<uint32>();
+        record.firstFailure = fields[11].Get<uint32>();
+        record.lastFailure = fields[12].Get<uint32>();
+        record.avoided = fields[13].Get<uint8>() != 0;
+        record.deathMap = fields[14].Get<uint32>();
+        record.deathZone = fields[15].Get<uint32>();
+        record.deathX = fields[16].Get<float>();
+        record.deathY = fields[17].Get<float>();
+        record.deathZ = fields[18].Get<float>();
+        record.killerEntry = fields[19].Get<uint32>();
+        record.killerSpawn = fields[20].Get<uint32>();
+
+        bool invalid = !sMapStore.LookupEntry(record.mapId);
+        if (record.questId)
+        {
+            invalid = invalid || !sObjectMgr->GetQuestTemplate(record.questId) || bot->IsQuestRewarded(record.questId);
+            if (record.type == FailedObjectiveType::QuestObjective)
+                invalid = invalid || bot->GetQuestStatus(record.questId) == QUEST_STATUS_NONE;
+        }
+        if ((record.type == FailedObjectiveType::Grind || record.type == FailedObjectiveType::Rpg ||
+             record.type == FailedObjectiveType::Boss) &&
+            record.entry && !sObjectMgr->GetCreatureTemplate(std::abs(record.entry)))
+            invalid = true;
+        if (record.type == FailedObjectiveType::Explore && record.entry && !sAreaTableStore.LookupEntry(record.entry))
+            invalid = true;
+
+        if (invalid)
+        {
+            LOG_INFO("playerbots", "{} cleared failed objective type={} quest={} site={} reason=invalid",
+                     bot->GetName(), FailedObjectiveTypeName(record.type), record.questId, record.siteId);
+            DeleteFailedObjective(record);
+        }
+        else if (record.failedLevel == bot->GetLevel())
+            failedObjectives.push_back(record);
+        else if (record.failedLevel < bot->GetLevel())
+            DeleteFailedObjective(record);
+    } while (result->NextRow());
+}
+
+void PlayerbotAI::RecordObjectiveFailure(uint32 killerEntry, uint32 killerSpawn)
+{
+    if (!killerEntry)
+        killerEntry = pendingObjectiveFailureKillerEntry;
+    if (!killerSpawn)
+        killerSpawn = pendingObjectiveFailureKillerSpawn;
+    pendingObjectiveFailureKillerEntry = 0;
+    pendingObjectiveFailureKillerSpawn = 0;
+
+    if (!sPlayerbotAIConfig.failedObjectiveAvoidance || !IsAutonomousRandomBot() || bot->InBattleground())
+        return;
+
+    FailedObjectiveRecord current = BuildCurrentObjectiveFailure();
+    current.deathMap = bot->GetMapId();
+    current.deathZone = bot->GetZoneId();
+    current.deathX = bot->GetPositionX();
+    current.deathY = bot->GetPositionY();
+    current.deathZ = bot->GetPositionZ();
+    current.killerEntry = killerEntry;
+    current.killerSpawn = killerSpawn;
+
+    uint32 const now = static_cast<uint32>(time(nullptr));
+    auto itr = std::find_if(failedObjectives.begin(), failedObjectives.end(),
+                            [this, &current](FailedObjectiveRecord const& record)
+                            { return IsSameFailedObjective(record, current); });
+    if (itr == failedObjectives.end())
+    {
+        current.failureCount = 1;
+        current.firstFailure = now;
+        current.lastFailure = now;
+        failedObjectives.push_back(current);
+        itr = std::prev(failedObjectives.end());
+    }
+    else
+    {
+        bool const inWindow =
+            now >= itr->lastFailure && now - itr->lastFailure <= sPlayerbotAIConfig.failedObjectiveFailureWindow;
+        itr->failureCount = inWindow ? itr->failureCount + 1 : 1;
+        itr->firstFailure = inWindow ? itr->firstFailure : now;
+        itr->lastFailure = now;
+        itr->deathMap = current.deathMap;
+        itr->deathZone = current.deathZone;
+        itr->deathX = current.deathX;
+        itr->deathY = current.deathY;
+        itr->deathZ = current.deathZ;
+        itr->killerEntry = killerEntry;
+        itr->killerSpawn = killerSpawn;
+    }
+
+    bool const newlyAvoided = !itr->avoided && itr->failureCount >= sPlayerbotAIConfig.failedObjectiveDeathThreshold;
+    itr->avoided = itr->failureCount >= sPlayerbotAIConfig.failedObjectiveDeathThreshold;
+    PersistFailedObjective(*itr);
+
+    LOG_INFO("playerbots",
+             "{} failed objective type={} quest={} objective={} entry={} site={} level={} failures={} window={}s "
+             "death=({}:{}, {:.1f}, {:.1f}, {:.1f}) killer={}:{} avoided={}",
+             bot->GetName(), FailedObjectiveTypeName(itr->type), itr->questId, itr->objective, itr->entry, itr->siteId,
+             itr->failedLevel, itr->failureCount, sPlayerbotAIConfig.failedObjectiveFailureWindow, itr->deathMap,
+             itr->deathZone, itr->deathX, itr->deathY, itr->deathZ, itr->killerEntry, itr->killerSpawn, itr->avoided);
+
+    if (newlyAvoided)
+    {
+        pendingObjectiveReplacementLog = true;
+        ClearVoluntaryTargets();
+        rpgInfo.ChangeToIdle();
+    }
+}
+
+void PlayerbotAI::SetObjectiveFailureKiller(uint32 killerEntry, uint32 killerSpawn)
+{
+    // The creature-kill hook runs before OnPlayerJustDied, where the objective snapshot is recorded.
+    pendingObjectiveFailureKillerEntry = killerEntry;
+    pendingObjectiveFailureKillerSpawn = killerSpawn;
+}
+
+void PlayerbotAI::ClearFailedObjectivesForQuest(uint32 questId, std::string const& reason)
+{
+    if (!questId)
+        return;
+
+    for (auto itr = failedObjectives.begin(); itr != failedObjectives.end();)
+    {
+        if (itr->questId != questId)
+        {
+            ++itr;
+            continue;
+        }
+
+        LOG_INFO("playerbots", "{} cleared failed objective quest={} site={} reason={}", bot->GetName(), questId,
+                 itr->siteId, reason);
+        DeleteFailedObjective(*itr);
+        itr = failedObjectives.erase(itr);
+    }
+}
+
+void PlayerbotAI::ClearFailedObjectivesForLevel(uint8 oldLevel)
+{
+    if (bot->GetLevel() <= oldLevel)
+        return;
+
+    for (FailedObjectiveRecord const& record : failedObjectives)
+    {
+        LOG_INFO("playerbots", "{} cleared failed objective type={} quest={} site={} failedLevel={} reason=level_up",
+                 bot->GetName(), FailedObjectiveTypeName(record.type), record.questId, record.siteId,
+                 record.failedLevel);
+    }
+    failedObjectives.clear();
+    pendingObjectiveReplacementLog = false;
+    PlayerbotsDatabase.Execute("DELETE FROM playerbots_failed_objectives WHERE bot={} AND failed_level<{}",
+                               bot->GetGUID().GetCounter(), bot->GetLevel());
+}
+
+void PlayerbotAI::LogObjectiveReplacement(std::string const& replacement)
+{
+    if (!pendingObjectiveReplacementLog)
+        return;
+
+    LOG_INFO("playerbots", "{} selected replacement objective {} at level {}", bot->GetName(), replacement,
+             bot->GetLevel());
+    pendingObjectiveReplacementLog = false;
+}
 
 bool PlayerbotAI::AllowActive(ActivityType activityType)
 {

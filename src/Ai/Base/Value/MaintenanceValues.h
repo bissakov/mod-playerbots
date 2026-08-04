@@ -13,6 +13,7 @@ class Creature;
 class PlayerbotAI;
 
 bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor);
+bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, uint32 vendorEntry);
 
 class CanMoveAroundValue : public BoolCalculatedValue
 {

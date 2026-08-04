@@ -403,6 +403,9 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
         if (std::find(failedHubExclusions.begin(), failedHubExclusions.end(), hub.zoneId) != failedHubExclusions.end())
             continue;
 
+        if (botAI->IsPositionAvoided(FailedObjectiveType::ZoneTravel, hub.position, 0, resumeQuestId))
+            continue;
+
         if (breadcrumb)
         {
             if (hub.zoneId == requestedZone)
@@ -492,7 +495,8 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
     // records a destination zone of 0, and the arrival test compares the bot's live
     // zone against that, so the bot can never finish: it walks the route and then
     // replans until it burns through its retries. Leave it to the hub candidates.
-    if (candidates.empty() && breadcrumb && requestedDestination && requestedZone)
+    if (candidates.empty() && breadcrumb && requestedDestination && requestedZone &&
+        !botAI->IsPositionAvoided(FailedObjectiveType::ZoneTravel, requestedDestination, 0, resumeQuestId))
     {
         directAttempted = true;
         ZoneTravelRoute route = ZoneTravelRoutePolicy::BuildRoute(botAI, requestedDestination);
@@ -1202,7 +1206,11 @@ bool NewRpgBaseAction::GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector
         if (dz == INVALID_HEIGHT || dz == VMAP_INVALID_HEIGHT_VALUE)
             return;
 
-        poiInfo.push_back({WorldPosition(qPoi.MapId, dx, dy, dz), qPoi.ObjectiveIndex});
+        WorldPosition position(qPoi.MapId, dx, dy, dz);
+        if (botAI->IsQuestObjectiveAvoided(questId, qPoi.ObjectiveIndex, qPoi.Id, position))
+            return;
+
+        poiInfo.push_back({position, qPoi.ObjectiveIndex, qPoi.Id});
     };
 
     if (toComplete && q_status.Status == QUEST_STATUS_COMPLETE)
@@ -1409,6 +1417,7 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
     {
         botAI->rpgInfo.ChangeToRest();
         bot->SetStandState(UNIT_STAND_STATE_SIT);
+        botAI->LogObjectiveReplacement("new RPG rest fallback");
         return true;
     }
     uint32 rand = urand(1, probSum);
@@ -1424,35 +1433,41 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
         }
     }
 
+    auto replacementSelected = [this, chosenStatus]()
+    {
+        botAI->LogObjectiveReplacement("new RPG status " + std::to_string(chosenStatus));
+        return true;
+    };
+
     switch (chosenStatus)
     {
         case RPG_WANDER_RANDOM:
         {
             botAI->rpgInfo.ChangeToWanderRandom();
-            return true;
+            return replacementSelected();
         }
         case RPG_WANDER_NPC:
         {
             botAI->rpgInfo.ChangeToWanderNpc();
-            return true;
+            return replacementSelected();
         }
         case RPG_GO_GRIND:
         {
             WorldPosition pos = SelectRandomGrindPos(bot);
-            if (pos != WorldPosition())
+            if (pos != WorldPosition() && !botAI->IsPositionAvoided(FailedObjectiveType::Grind, pos))
             {
                 botAI->rpgInfo.ChangeToGoGrind(pos);
-                return true;
+                return replacementSelected();
             }
             return false;
         }
         case RPG_GO_CAMP:
         {
             WorldPosition pos = SelectRandomCampPos(bot);
-            if (pos != WorldPosition())
+            if (pos != WorldPosition() && !botAI->IsPositionAvoided(FailedObjectiveType::Camp, pos))
             {
                 botAI->rpgInfo.ChangeToGoCamp(pos);
-                return true;
+                return replacementSelected();
             }
             return false;
         }
@@ -1478,7 +1493,7 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
                 if (quest)
                 {
                     botAI->rpgInfo.ChangeToDoQuest(questId, quest);
-                    return true;
+                    return replacementSelected();
                 }
             }
             return false;
@@ -1491,31 +1506,31 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
             if (SelectRandomFlightTaxiNode(flightMasterEntry, flightMasterPos, path))
             {
                 botAI->rpgInfo.ChangeToTravelFlight(flightMasterEntry, flightMasterPos, path);
-                return true;
+                return replacementSelected();
             }
             return false;
         }
         case RPG_IDLE:
         {
             botAI->rpgInfo.ChangeToIdle();
-            return true;
+            return replacementSelected();
         }
         case RPG_REST:
         {
             botAI->rpgInfo.ChangeToRest();
             bot->SetStandState(UNIT_STAND_STATE_SIT);
-            return true;
+            return replacementSelected();
         }
         case RPG_OUTDOOR_PVP:
         {
             botAI->rpgInfo.ChangeToOutdoorPvp();
-            return true;
+            return replacementSelected();
         }
         default:
         {
             botAI->rpgInfo.ChangeToRest();
             bot->SetStandState(UNIT_STAND_STATE_SIT);
-            return true;
+            return replacementSelected();
         }
     }
     return false;
@@ -1536,12 +1551,12 @@ bool NewRpgBaseAction::CheckRpgStatusAvailable(NewRpgStatus status)
         case RPG_GO_GRIND:
         {
             WorldPosition pos = SelectRandomGrindPos(bot);
-            return pos != WorldPosition();
+            return pos != WorldPosition() && !botAI->IsPositionAvoided(FailedObjectiveType::Grind, pos);
         }
         case RPG_GO_CAMP:
         {
             WorldPosition pos = SelectRandomCampPos(bot);
-            return pos != WorldPosition();
+            return pos != WorldPosition() && !botAI->IsPositionAvoided(FailedObjectiveType::Camp, pos);
         }
         case RPG_WANDER_NPC:
         {
@@ -1577,6 +1592,8 @@ bool NewRpgBaseAction::CheckRpgStatusAvailable(NewRpgStatus status)
             if (!bot->IsPvP())
                 return false;
             uint32 zoneId = bot->GetZoneId();
+            if (botAI->IsPositionAvoided(FailedObjectiveType::OutdoorPvp, WorldPosition(bot), zoneId))
+                return false;
             if (zoneId == AREA_NAGRAND)
                 return false;
 

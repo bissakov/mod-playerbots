@@ -12,9 +12,11 @@
 #include "ItemUsageValue.h"
 #include "Playerbots.h"
 
-bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor)
+namespace
 {
-    if (!vendor || !vendor->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
+bool CanBuyBagUpgrade(PlayerbotAI* botAI, VendorItemData const* items, float discount)
+{
+    if (!items)
         return false;
 
     Player* bot = botAI->GetBot();
@@ -25,15 +27,10 @@ bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor)
         smallestBagSize = std::min(smallestBagSize, equippedBag ? equippedBag->GetBagSize() : 0u);
     }
 
-    VendorItemData const* items = vendor->GetVendorItems();
-    if (!items)
-        return false;
-
     uint32 availableMoney =
         botAI->GetAiObjectContext()
             ->GetValue<uint32>("free money for", std::to_string(static_cast<uint32>(NeedMoneyFor::gear)))
             ->Get();
-    float discount = bot->GetReputationPriceDiscount(vendor);
     for (VendorItem const* item : items->m_items)
     {
         ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item->item);
@@ -47,6 +44,26 @@ bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor)
     }
 
     return false;
+}
+}  // namespace
+
+bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, Creature* vendor)
+{
+    if (!vendor || !vendor->HasNpcFlag(UNIT_NPC_FLAG_VENDOR))
+        return false;
+
+    return CanBuyBagUpgrade(botAI, vendor->GetVendorItems(), botAI->GetBot()->GetReputationPriceDiscount(vendor));
+}
+
+bool CanBuyBagUpgradeAt(PlayerbotAI* botAI, uint32 vendorEntry)
+{
+    CreatureTemplate const* vendor = sObjectMgr->GetCreatureTemplate(vendorEntry);
+    if (!vendor || !(vendor->npcflag & UNIT_NPC_FLAG_VENDOR))
+        return false;
+
+    FactionTemplateEntry const* faction = sFactionTemplateStore.LookupEntry(vendor->faction);
+    return faction && CanBuyBagUpgrade(botAI, sObjectMgr->GetNpcVendorItemList(vendorEntry),
+                                       botAI->GetBot()->GetReputationPriceDiscount(faction));
 }
 
 bool CanMoveAroundValue::Calculate()
