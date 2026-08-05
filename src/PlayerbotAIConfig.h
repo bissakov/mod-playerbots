@@ -384,6 +384,10 @@ public:
     uint32 failedObjectiveDeathThreshold;
     uint32 failedObjectiveFailureWindow;
     float failedObjectiveSiteRadius;
+    uint32 pullSafetyMinHealth;
+    uint32 pullSafetyMinMana;
+    uint32 pullSafetyMaxAdds;
+    float pullSafetyAddRadius;
     int32 hunterWolfPet;
     int32 defaultPetStance;
     int32 petChatCommandDebug;

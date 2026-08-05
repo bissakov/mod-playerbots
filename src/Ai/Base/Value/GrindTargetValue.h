@@ -28,6 +28,7 @@ private:
 
     uint32 GetTargetingPlayerCount(Unit* unit);
     Unit* FindTargetForGrinding(uint32 assistCount);
+    uint32 CountHostileAddsNear(Unit* candidate, GuidVector const& targets);
     bool needForQuest(Unit* target);
 };
 

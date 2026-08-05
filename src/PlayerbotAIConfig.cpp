@@ -705,6 +705,10 @@ bool PlayerbotAIConfig::Initialize()
         sConfigMgr->GetOption<uint32>("AiPlayerbot.FailedObjectiveFailureWindow", 30 * MINUTE);
     failedObjectiveSiteRadius =
         std::max(20.0f, sConfigMgr->GetOption<float>("AiPlayerbot.FailedObjectiveSiteRadius", 120.0f));
+    pullSafetyMinHealth = sConfigMgr->GetOption<uint32>("AiPlayerbot.PullSafetyMinHealth", 65);
+    pullSafetyMinMana = sConfigMgr->GetOption<uint32>("AiPlayerbot.PullSafetyMinMana", 35);
+    pullSafetyMaxAdds = sConfigMgr->GetOption<uint32>("AiPlayerbot.PullSafetyMaxAdds", 1);
+    pullSafetyAddRadius = std::max(0.0f, sConfigMgr->GetOption<float>("AiPlayerbot.PullSafetyAddRadius", 10.0f));
     hunterWolfPet = sConfigMgr->GetOption<int32>("AiPlayerbot.HunterWolfPet", 0);
     defaultPetStance = sConfigMgr->GetOption<int32>("AiPlayerbot.DefaultPetStance", 1);
     petChatCommandDebug = sConfigMgr->GetOption<bool>("AiPlayerbot.PetChatCommandDebug", 0);

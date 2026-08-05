@@ -87,6 +87,15 @@ Unit* GrindTargetValue::FindTargetForGrinding(uint32 assistCount)
     if (botAI->IsResurrectionSicknessRecoveryActive() || botAI->IsInsideAvoidedArea())
         return nullptr;
 
+    // A player rests back to a comfortable margin before starting the next fight instead of
+    // pulling with whatever the last one left over.
+    if (bot->GetHealthPct() < sPlayerbotAIConfig.pullSafetyMinHealth)
+        return nullptr;
+
+    if (bot->getPowerType() == POWER_MANA && bot->GetMaxPower(POWER_MANA) &&
+        bot->GetPowerPct(POWER_MANA) < sPlayerbotAIConfig.pullSafetyMinMana)
+        return nullptr;
+
     GuidVector targets = *context->GetValue<GuidVector>("possible targets");
     if (targets.empty())
         return nullptr;
@@ -160,6 +169,11 @@ Unit* GrindTargetValue::FindTargetForGrinding(uint32 assistCount)
                 continue;
         }
 
+        // Starting a fight inside a camp brings the neighbors along through proximity and
+        // social aggro, which a lone bot does not survive. Pick a target on the edge instead.
+        if (CountHostileAddsNear(unit, targets) > sPlayerbotAIConfig.pullSafetyMaxAdds)
+            continue;
+
         if (group)
         {
             Group::MemberSlotList const& groupSlot = group->GetMemberSlots();
@@ -189,6 +203,29 @@ Unit* GrindTargetValue::FindTargetForGrinding(uint32 assistCount)
     }
 
     return result;
+}
+
+uint32 GrindTargetValue::CountHostileAddsNear(Unit* candidate, GuidVector const& targets)
+{
+    uint32 count = 0;
+    for (ObjectGuid const guid : targets)
+    {
+        if (guid == candidate->GetGUID())
+            continue;
+
+        Unit* other = botAI->GetUnit(guid);
+        if (!other || !other->IsAlive() || !other->ToCreature())
+            continue;
+
+        // Neutral mobs neither aggro on proximity nor assist the pulled target.
+        if (!other->IsHostileTo(bot))
+            continue;
+
+        if (candidate->GetDistance(other) < sPlayerbotAIConfig.pullSafetyAddRadius)
+            ++count;
+    }
+
+    return count;
 }
 
 bool GrindTargetValue::needForQuest(Unit* target)

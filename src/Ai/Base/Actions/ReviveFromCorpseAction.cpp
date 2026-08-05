@@ -66,16 +66,6 @@ bool ReviveFromCorpseAction::Execute(Event event)
             return false;
     }
 
-    if (!botAI->HasRealPlayerMaster())
-    {
-        uint32 dCount = AI_VALUE(uint32, "death count");
-
-        if (dCount >= 5)
-        {
-            return botAI->DoSpecificAction("spirit healer");
-        }
-    }
-
     WorldPacket packet(CMSG_RECLAIM_CORPSE);
     packet << bot->GetGUID();
     bot->GetSession()->HandleReclaimCorpseOpcode(packet);
@@ -117,17 +107,14 @@ bool FindCorpseAction::Execute(Event /*event*/)
 
     uint32 dCount = AI_VALUE(uint32, "death count");
 
-    if (!botAI->HasRealPlayerMaster())
+    // A death streak must not divert the ghost to the Spirit Healer: a player reclaims the
+    // corpse unless the run is hopeless, and the run is already time-bounded below. Only
+    // non-organic bots get the cheap teleport revive to limit skeleton piles.
+    if (!botAI->HasRealPlayerMaster() && dCount >= 5 && !sPlayerbotAIConfig.organicProgression)
     {
-        if (dCount >= 5)
-        {
-            if (sPlayerbotAIConfig.organicProgression)
-                return botAI->DoSpecificAction("spirit healer", Event(), true);
-
-            context->GetValue<uint32>("death count")->Set(0);
-            sRandomPlayerbotMgr.Revive(bot);
-            return true;
-        }
+        context->GetValue<uint32>("death count")->Set(0);
+        sRandomPlayerbotMgr.Revive(bot);
+        return true;
     }
 
     WorldPosition botPos(bot);
@@ -214,11 +201,8 @@ bool FindCorpseAction::Execute(Event /*event*/)
             moved = true;
         else
         {
-            if (deadTime < 10 * MINUTE && dCount < 5)  // Look for corpse up to 30 minutes.
-            {
-                moved =
-                    MoveTo(moveToPos.GetMapId(), moveToPos.GetPositionX(), moveToPos.GetPositionY(), moveToPos.GetPositionZ(), false, false);
-            }
+            moved = MoveTo(moveToPos.GetMapId(), moveToPos.GetPositionX(), moveToPos.GetPositionY(),
+                           moveToPos.GetPositionZ(), false, false);
 
             if (!moved)
             {

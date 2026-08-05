@@ -1026,6 +1026,17 @@ AiPlayerbot.FailedObjectiveDeathThreshold = 2
 AiPlayerbot.FailedObjectiveFailureWindow = 1800
 AiPlayerbot.FailedObjectiveSiteRadius = 120.0
 
+# Randombots only start a voluntary fight from a safe state: not below PullSafetyMinHealth percent
+# health (mana users additionally not below PullSafetyMinMana percent mana), and not against a target
+# that has more than PullSafetyMaxAdds other hostile creatures within PullSafetyAddRadius yards of it.
+# Bots that are attacked always defend themselves regardless of these gates.
+# Set the health/mana thresholds to 0 to disable resting before a pull.
+# Defaults: 65 percent health, 35 percent mana, 1 add, 10 yards
+AiPlayerbot.PullSafetyMinHealth = 65
+AiPlayerbot.PullSafetyMinMana = 35
+AiPlayerbot.PullSafetyMaxAdds = 1
+AiPlayerbot.PullSafetyAddRadius = 10.0
+
 # Autonomous randombots with Resurrection Sickness use only affordable service errands or rest. Combat
 # objectives remain suspended for the aura's actual remaining duration; attacked bots still defend themselves.
 # Default: 1 (enabled)
