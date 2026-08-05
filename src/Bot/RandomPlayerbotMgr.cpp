@@ -414,9 +414,30 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 /*elapsed*/, bool /*minimal*/)
 
     if (!availableBots.empty())
     {
-        // Update bots
-        for (auto bot : availableBots)
+        // Update bots.
+        // The per-tick update budget is a fraction of RandomBotsPerInterval, which on a populated
+        // realm is an order of magnitude smaller than the number of online bots. Walking the list
+        // from the front every tick therefore spends the whole budget on the same head of the list
+        // and never reaches the tail: those bots are never randomized, never teleported, and their
+        // in-world timer is never evaluated, so the periodic online/offline rotation stalls.
+        // Resume where the previous tick stopped so every bot is visited in turn.
+        std::vector<uint32> updateOrder(availableBots.begin(), availableBots.end());
+        std::size_t startIndex = 0;
+        if (updateCursorBot)
         {
+            auto cursor = std::find(updateOrder.begin(), updateOrder.end(), updateCursorBot);
+            if (cursor != updateOrder.end())
+                startIndex = std::distance(updateOrder.begin(), cursor);
+        }
+
+        for (std::size_t i = 0; i < updateOrder.size(); ++i)
+        {
+            std::size_t const index = (startIndex + i) % updateOrder.size();
+            uint32 bot = updateOrder[index];
+
+            // Remember the next bot before any early exit, so the next tick continues past this one.
+            updateCursorBot = updateOrder[(index + 1) % updateOrder.size()];
+
             if (!GetPlayerBot(bot))
                 continue;
 
@@ -694,35 +715,50 @@ uint32 RandomPlayerbotMgr::AddRandomBots()
             accountsToUse = rndBotTypeAccounts;
         }
 
-        // Pre-map all characters from selected accounts
-        struct CharacterInfo
+        // Pre-map all characters from selected accounts.
+        // Once the online/offline rotation is actually running this path is taken on almost every
+        // interval, so the character list of each selected account is cached instead of being read
+        // back from the character database on the world thread every time. The roster of a random
+        // bot account only changes when bots are created or deleted, which the periodic refresh
+        // below picks up.
+        using CharacterInfo = RandomBotCharacter;
+
+        if (time(nullptr) >= accountCharacterCacheExpiry)
         {
-            uint32 guid;
-            uint8 rClass;
-            uint8 rRace;
-            uint32 accountId;
-        };
+            accountCharacterCache.clear();
+            accountCharacterCacheExpiry = time(nullptr) + 5 * MINUTE;
+        }
+
         std::vector<CharacterInfo> allCharacters;
 
         for (uint32 accountId : accountsToUse)
         {
-            CharacterDatabasePreparedStatement* stmt =
-                CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHARS_BY_ACCOUNT_ID);
-            stmt->SetData(0, accountId);
-            PreparedQueryResult result = CharacterDatabase.Query(stmt);
-            if (!result)
-                continue;
-
-            do
+            auto cached = accountCharacterCache.find(accountId);
+            if (cached == accountCharacterCache.end())
             {
-                Field* fields = result->Fetch();
-                CharacterInfo info;
-                info.guid = fields[0].Get<uint32>();
-                info.rClass = fields[1].Get<uint8>();
-                info.rRace = fields[2].Get<uint8>();
-                info.accountId = accountId;
-                allCharacters.push_back(info);
-            } while (result->NextRow());
+                std::vector<CharacterInfo> characters;
+
+                CharacterDatabasePreparedStatement* stmt =
+                    CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHARS_BY_ACCOUNT_ID);
+                stmt->SetData(0, accountId);
+                if (PreparedQueryResult result = CharacterDatabase.Query(stmt))
+                {
+                    do
+                    {
+                        Field* fields = result->Fetch();
+                        CharacterInfo info;
+                        info.guid = fields[0].Get<uint32>();
+                        info.rClass = fields[1].Get<uint8>();
+                        info.rRace = fields[2].Get<uint8>();
+                        info.accountId = accountId;
+                        characters.push_back(info);
+                    } while (result->NextRow());
+                }
+
+                cached = accountCharacterCache.emplace(accountId, std::move(characters)).first;
+            }
+
+            allCharacters.insert(allCharacters.end(), cached->second.begin(), cached->second.end());
         }
 
         // Shuffle for class balance
@@ -1350,20 +1386,47 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
     uint32 isValid = GetEventValue(bot, "add");
     if (!isValid)
     {
-        if (!player || !player->GetGroup())
+        // The in-world time is up. Do not pull the bot out of content other participants depend on,
+        // but re-arm the timer while waiting instead of leaving the bot without an "add" event: an
+        // expired event makes every later branch of this function skip the bot, so it would hold its
+        // slot forever, never rotate out and never be maintained again. A group of bots alone is no
+        // reason to wait; it is broken up by the logout itself.
+        if (player && (IsGroupedWithRealPlayer(player) || player->InBattleground() || player->InBattlegroundQueue() ||
+                       player->HasUnitState(UNIT_STATE_IN_FLIGHT) ||
+                       (player->IsInWorld() && player->GetMap() && player->GetMap()->IsDungeon())))
         {
-            if (player)
-                LOG_DEBUG("playerbots", "Bot #{} {}:{} <{}>: log out", bot, IsAlliance(player->getRace()) ? "A" : "H",
-                          player->GetLevel(), player->GetName().c_str());
-            else
-                LOG_DEBUG("playerbots", "Bot #{}: log out", bot);
-
-            SetEventValue(bot, "add", 0, 0);
-            currentBots.remove(bot);
-
-            if (player)
-                LogoutPlayerBot(botGUID);
+            SetEventValue(bot, "add", 1,
+                          urand(sPlayerbotAIConfig.minRandomBotReviveTime, sPlayerbotAIConfig.maxRandomBotReviveTime));
+            return false;
         }
+
+        if (player)
+            LOG_DEBUG("playerbots", "Bot #{} {}:{} <{}>: log out", bot, IsAlliance(player->getRace()) ? "A" : "H",
+                      player->GetLevel(), player->GetName().c_str());
+        else
+            LOG_DEBUG("playerbots", "Bot #{}: log out", bot);
+
+        SetEventValue(bot, "add", 0, 0);
+        currentBots.remove(bot);
+
+        // Hold the bot offline for a while so the characters that have not played yet get their
+        // turn instead of the same ones being picked again right away. The offline pool holds
+        // (ratio - 1) bots for every online bot, and a bot logs out once per in-world period on
+        // average, so half of that budget keeps the pool comfortably large enough to keep filling
+        // the online quota.
+        if (sPlayerbotAIConfig.enablePeriodicOnlineOffline)
+        {
+            float const offlineShare = std::max(0.0f, sPlayerbotAIConfig.periodicOnlineOfflineRatio - 1.0f) / 2.0f;
+            uint32 const offlineTime = static_cast<uint32>(
+                urand(sPlayerbotAIConfig.minRandomBotInWorldTime, sPlayerbotAIConfig.maxRandomBotInWorldTime) *
+                offlineShare);
+
+            if (offlineTime)
+                SetEventValue(bot, "logout", 1, offlineTime);
+        }
+
+        if (player)
+            LogoutPlayerBot(botGUID);
 
         return false;
     }
@@ -1437,16 +1500,26 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
         return true;
     }
 
-    uint32 logout = GetEventValue(bot, "logout");
-    if (player && !logout && !isValid)
+    return false;
+}
+
+// A bot whose group holds at least one human player must not be pulled out from under that player.
+// Every other group is bots only and can be broken up by a rotation logout.
+bool RandomPlayerbotMgr::IsGroupedWithRealPlayer(Player* player)
+{
+    Group* group = player->GetGroup();
+    if (!group)
+        return false;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
-        LOG_DEBUG("playerbots", "Bot #{} {}:{} <{}>: log out", bot, IsAlliance(player->getRace()) ? "A" : "H",
-                  player->GetLevel(), player->GetName().c_str());
-        LogoutPlayerBot(botGUID);
-        currentBots.remove(bot);
-        SetEventValue(bot, "logout", 1,
-                      urand(sPlayerbotAIConfig.minRandomBotInWorldTime, sPlayerbotAIConfig.maxRandomBotInWorldTime));
-        return true;
+        Player* member = ref->GetSource();
+        if (!member || member == player)
+            continue;
+
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI || memberAI->IsRealPlayer())
+            return true;
     }
 
     return false;

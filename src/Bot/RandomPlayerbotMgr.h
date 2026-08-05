@@ -236,6 +236,7 @@ private:
     time_t printStatsTimer;
     uint32 AddRandomBots();
     bool ProcessBot(uint32 bot);
+    static bool IsGroupedWithRealPlayer(Player* player);
     void ScheduleRandomize(uint32 bot, uint32 time);
     void RandomTeleport(Player* bot);
     bool TryRandomTeleportForLevel(Player* bot);
@@ -250,8 +251,23 @@ private:
     std::map<TeamId, std::map<BattlegroundTypeId, std::vector<uint32>>> BattleMastersCache;
     std::unordered_map<uint32, BotEventCache> eventCache;
     std::list<uint32> currentBots;
+    // Where the previous update tick stopped walking currentBots. The per-tick update budget is far
+    // smaller than the online population, so restarting from the front every tick would leave the
+    // tail of the list unprocessed forever.
+    uint32 updateCursorBot = 0;
     uint32 bgBotsCount;
     uint32 playersLevel;
+
+    // Cached character roster of a random bot account, used when picking bots to log in
+    struct RandomBotCharacter
+    {
+        uint32 guid;
+        uint8 rClass;
+        uint8 rRace;
+        uint32 accountId;
+    };
+    std::unordered_map<uint32, std::vector<RandomBotCharacter>> accountCharacterCache;
+    time_t accountCharacterCacheExpiry = 0;
 
     // Account lists
     std::vector<uint32> rndBotTypeAccounts;             // Accounts marked as RNDbot (type 1)
