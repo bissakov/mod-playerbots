@@ -892,7 +892,10 @@ void PlayerbotAI::Reset(bool full)
             ->setTarget(TravelMgr::instance().nullTravelDestination, TravelMgr::instance().nullWorldPosition, true);
         aiObjectContext->GetValue<TravelTarget*>("travel target")->Get()->setStatus(TRAVEL_STATUS_EXPIRED);
         aiObjectContext->GetValue<TravelTarget*>("travel target")->Get()->setExpireIn(1000);
-        rpgInfo = NewRpgInfo();
+        // The current objective is dropped, but not the record of where the bot has just
+        // travelled: a teleport is no reason to forget the zone it left, and forgetting it is
+        // what let an arrival reverse itself into an endless round trip.
+        rpgInfo.ResetKeepingZoneMemory();
     }
 
     aiObjectContext->GetValue<GuidSet&>("ignore rpg target")->Get().clear();

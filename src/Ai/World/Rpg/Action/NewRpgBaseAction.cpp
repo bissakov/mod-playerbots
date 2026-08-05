@@ -6,6 +6,8 @@
 
 #include "NewRpgBaseAction.h"
 
+#include <limits>
+
 #include "BroadcastHelper.h"
 #include "ChatHelper.h"
 #include "Creature.h"
@@ -343,9 +345,71 @@ uint32 NewRpgBaseAction::GetPositionZoneId(WorldPosition const& position) const
                               position.GetPositionY(), position.GetPositionZ());
 }
 
+bool NewRpgBaseAction::IsLocalObjective(WorldPosition const& pos, uint32 poiZone) const
+{
+    if (pos.GetMapId() != bot->GetMapId())
+        return false;
+
+    if (poiZone == bot->GetZoneId())
+        return true;
+
+    // Area lookups around subzone boundaries can disagree even for a nearby objective in the
+    // same top-level zone. Normal quest movement can walk there directly; treating it as a
+    // zone migration requires a hub for the spurious area id and repeatedly failed local
+    // quests such as Sharing the Land in Mulgore.
+    return bot->GetExactDist(pos) < 1500.0f;
+}
+
+void NewRpgBaseAction::SplitWorkableObjectives(std::vector<POIInfo> const& poiInfo, std::vector<POIInfo>& local,
+                                              std::vector<POIInfo>& remote) const
+{
+    for (POIInfo const& poi : poiInfo)
+    {
+        uint32 poiZone = GetPositionZoneId(poi.pos);
+        if (!poiZone)
+            continue;
+
+        if (IsLocalObjective(poi.pos, poiZone))
+            local.push_back(poi);
+        else if (!TravelMgr::IsOpenWater(poi.pos) && CanFollowCrossZoneObjective(poiZone, poi.objectiveIdx))
+            remote.push_back(poi);
+    }
+}
+
+bool NewRpgBaseAction::CanFollowCrossZoneObjective(uint32 poiZone, int32 objectiveIdx) const
+{
+    // A bot that just walked into a zone works there before a quest in another zone may pull it
+    // out again, so an arrival cannot immediately produce the reverse trip.
+    if (!CanStartBreadcrumbTravel())
+        return false;
+
+    // The bot has just come from there. Going back now would reverse the trip it just finished
+    // instead of doing anything with the zone it arrived in.
+    if (botAI->rpgInfo.LeftZoneRecently(poiZone,
+                                        sPlayerbotAIConfig.zoneProgressionZoneReturnCooldown * IN_MILLISECONDS))
+        return false;
+
+    // Handing a finished quest in is always worth the walk, so only outstanding objectives are
+    // measured against the bracket: a starter zone the bot outlevelled must not undo the
+    // advancement that took it to a level-appropriate zone.
+    if (objectiveIdx == -1)
+        return true;
+
+    uint32 bracketHigh = 0;
+    return !HasOutgrownZone(poiZone, bracketHigh);
+}
+
 bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint32& questId)
 {
-    uint32 currentZone = bot->GetZoneId();
+    // Objectives are worked in the zone the bot is standing in before it crosses a boundary
+    // again, the way a player clears what is in front of them instead of walking back and
+    // forth between two zones whose quests are both unfinished.
+    bool hasLocalObjective = false;
+    uint32 bestQuest = 0;
+    uint32 bestZone = 0;
+    WorldPosition bestDestination;
+    float bestCost = std::numeric_limits<float>::max();
+
     for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
     {
         uint32 candidateQuest = bot->GetQuestSlotQuestId(slot);
@@ -356,39 +420,67 @@ bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint3
         if (!GetQuestPOIPosAndObjectiveIdx(candidateQuest, poiInfo, true))
             continue;
 
-        for (POIInfo const& poi : poiInfo)
+        std::vector<POIInfo> localPoi;
+        std::vector<POIInfo> remotePoi;
+        SplitWorkableObjectives(poiInfo, localPoi, remotePoi);
+
+        if (!localPoi.empty())
         {
-            uint32 poiZone = GetPositionZoneId(poi.pos);
+            hasLocalObjective = true;
+            continue;
+        }
 
-            // A zone id of 0 means the lookup failed for that position, not that it sits in
-            // another zone. Treating it as cross-zone sends the bot migrating towards a zone
-            // that does not exist, which can never resolve to a hub or a route.
-            if (!poiZone)
+        if (remotePoi.empty())
+        {
+            // Nothing about this quest can be worked anywhere the bot is willing to go, and
+            // every outstanding objective sits in a zone it has outlevelled. Demote it so quest
+            // selection stops preferring it over the level-appropriate zone it travelled to.
+            bool allOutgrown = true;
+            for (POIInfo const& poi : poiInfo)
+            {
+                uint32 poiZone = GetPositionZoneId(poi.pos);
+                uint32 bracketHigh = 0;
+                if (poiZone && poi.objectiveIdx != -1 && HasOutgrownZone(poiZone, bracketHigh))
+                    continue;
+
+                allOutgrown = false;
+                break;
+            }
+
+            if (allOutgrown)
+            {
+                botAI->lowPriorityQuest.insert(candidateQuest);
+                LOG_DEBUG("playerbots", "[New RPG] {} demoted quest {}: every objective sits in a zone it outgrew",
+                          bot->GetName(), candidateQuest);
+            }
+            continue;
+        }
+
+        for (POIInfo const& poi : remotePoi)
+        {
+            // Quest log slot order decided the destination before, so two quests in adjacent
+            // zones made the winner an artifact of accept order. Nearest wins instead, and
+            // anything off the current continent loses to everything reachable on foot.
+            float cost = poi.pos.GetMapId() == bot->GetMapId() ? bot->GetExactDist(poi.pos)
+                                                               : std::numeric_limits<float>::max() / 2.0f;
+            if (cost >= bestCost)
                 continue;
 
-            if (poi.pos.GetMapId() == bot->GetMapId() && poiZone == currentZone)
-                continue;
-
-            // Quest POI centres can fall in the sea, most often for coastal objectives on the
-            // island starter zones. Walking to one leaves the bot floating in an ocean zone with
-            // nothing reachable, so it is never a legitimate migration target.
-            if (TravelMgr::IsOpenWater(poi.pos))
-                continue;
-
-            // Area lookups around subzone boundaries can disagree even for a
-            // nearby objective in the same top-level zone. Normal quest movement
-            // can walk there directly; treating it as a zone migration requires a
-            // hub for the spurious area id and repeatedly failed local quests such
-            // as Sharing the Land in Mulgore.
-            if (poi.pos.GetMapId() == bot->GetMapId() && bot->GetExactDist(poi.pos) < 1500.0f)
-                continue;
-
-            destination = poi.pos;
-            questId = candidateQuest;
-            return true;
+            bestCost = cost;
+            bestQuest = candidateQuest;
+            bestZone = GetPositionZoneId(poi.pos);
+            bestDestination = poi.pos;
         }
     }
-    return false;
+
+    if (hasLocalObjective || !bestQuest)
+        return false;
+
+    LOG_DEBUG("playerbots", "[New RPG] {} selected breadcrumb quest {} in zone {} at distance {:.0f}", bot->GetName(),
+              bestQuest, bestZone, bestCost);
+    destination = bestDestination;
+    questId = bestQuest;
+    return true;
 }
 
 bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint32 resumeQuestId, bool breadcrumb,
@@ -556,6 +648,9 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
     size_t selected = (bot->GetGUID().GetCounter() + failedHubExclusions.size()) % bestCount;
     Candidate& candidate = candidates[selected];
 
+    if (candidate.hub.zoneId != currentZone)
+        botAI->rpgInfo.NoteZoneDeparture(currentZone);
+
     botAI->rpgInfo.ChangeToTravelZone(candidate.hub.position, candidate.hub.zoneId, resumeQuestId, breadcrumb,
                                       std::move(candidate.route.steps), candidate.route.cost,
                                       std::move(failedHubExclusions), advancementBracketHigh);
@@ -576,13 +671,18 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
 
 bool NewRpgBaseAction::HasOutgrownCurrentZone(uint32& bracketHigh) const
 {
+    return HasOutgrownZone(bot->GetZoneId(), bracketHigh);
+}
+
+bool NewRpgBaseAction::HasOutgrownZone(uint32 zoneId, uint32& bracketHigh) const
+{
     // The top-level brackets have nowhere above them, so a capped bot staying in one is not
     // stuck, and asking for a higher bracket zone could only ever fail.
     if (bot->GetLevel() >= sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
         return false;
 
     TravelMgr::LevelBracket bracket{};
-    if (!sTravelMgr.GetZoneLevelBracket(bot->GetZoneId(), bracket))
+    if (!sTravelMgr.GetZoneLevelBracket(zoneId, bracket))
         return false;
 
     bracketHigh = bracket.high;
@@ -613,6 +713,27 @@ bool NewRpgBaseAction::StartZoneAdvancementTravel()
               "[New RPG] {} outgrew zone {} (bracket max {}) at level {} but found no higher bracket zone to travel to",
               bot->GetName(), bot->GetZoneId(), bracketHigh, bot->GetLevel());
     return false;
+}
+
+void NewRpgBaseAction::NoteZoneArrival(uint32 destinationZoneId)
+{
+    NewRpgInfo& info = botAI->rpgInfo;
+    info.lastProgressAt = getMSTime();
+    // A bot that just walked into a zone works there before another cross-zone quest may pull
+    // it out, so an arrival cannot immediately produce the reverse trip.
+    info.lastZoneArrivalAt = info.lastProgressAt;
+    botAI->rpgStatistic.zoneArrivals++;
+    LOG_INFO("playerbots", "[New RPG] {} arrived in zone {}", bot->GetName(), destinationZoneId);
+}
+
+bool NewRpgBaseAction::CanStartBreadcrumbTravel() const
+{
+    NewRpgInfo const& info = botAI->rpgInfo;
+    if (!info.lastZoneArrivalAt)
+        return true;
+
+    return GetMSTimeDiffToNow(info.lastZoneArrivalAt) >=
+           sPlayerbotAIConfig.zoneProgressionZoneDwellTime * IN_MILLISECONDS;
 }
 
 bool NewRpgBaseAction::RebuildZoneTravelRoute(NewRpgInfo::TravelZone& data)
@@ -1554,6 +1675,7 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
         case RPG_DO_QUEST:
         {
             std::vector<uint32> availableQuests;
+            std::vector<uint32> localQuests;
             for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
             {
                 uint32 questId = bot->GetQuestSlotQuestId(slot);
@@ -1561,11 +1683,24 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
                     continue;
 
                 std::vector<POIInfo> poiInfo;
-                if (GetQuestPOIPosAndObjectiveIdx(questId, poiInfo, true))
-                {
+                if (!GetQuestPOIPosAndObjectiveIdx(questId, poiInfo, true))
+                    continue;
+
+                std::vector<POIInfo> localPoi;
+                std::vector<POIInfo> remotePoi;
+                SplitWorkableObjectives(poiInfo, localPoi, remotePoi);
+                if (!localPoi.empty())
+                    localQuests.push_back(questId);
+                // A quest whose every objective is behind a zone crossing the bot must not make
+                // now is not something it can work on, so picking it would only burn the status
+                // slot that a grind or a workable quest could have used.
+                if (!localPoi.empty() || !remotePoi.empty())
                     availableQuests.push_back(questId);
-                }
             }
+            // What the bot can work where it stands comes first, so a quest log spanning two
+            // zones does not send it across a boundary while the current zone still has work.
+            if (!localQuests.empty())
+                availableQuests = std::move(localQuests);
             if (availableQuests.size())
             {
                 uint32 questId = availableQuests[urand(0, availableQuests.size() - 1)];
@@ -1645,7 +1780,6 @@ bool NewRpgBaseAction::CheckRpgStatusAvailable(NewRpgStatus status)
         }
         case RPG_DO_QUEST:
         {
-            std::vector<uint32> availableQuests;
             for (uint8 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
             {
                 uint32 questId = bot->GetQuestSlotQuestId(slot);
@@ -1653,10 +1787,14 @@ bool NewRpgBaseAction::CheckRpgStatusAvailable(NewRpgStatus status)
                     continue;
 
                 std::vector<POIInfo> poiInfo;
-                if (GetQuestPOIPosAndObjectiveIdx(questId, poiInfo, true))
-                {
+                if (!GetQuestPOIPosAndObjectiveIdx(questId, poiInfo, true))
+                    continue;
+
+                std::vector<POIInfo> localPoi;
+                std::vector<POIInfo> remotePoi;
+                SplitWorkableObjectives(poiInfo, localPoi, remotePoi);
+                if (!localPoi.empty() || !remotePoi.empty())
                     return true;
-                }
             }
             return false;
         }

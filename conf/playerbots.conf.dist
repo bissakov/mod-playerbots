@@ -1090,7 +1090,9 @@ AiPlayerbot.RestrictedHealerDPSMaps = "33,34,36,43,47,48,70,90,109,129,209,229,2
 AiPlayerbot.EnableNewRpgStrategy = 1
 
 # Enables organic cross-zone migration for New RPG bots. Accepted cross-zone
-# quests are followed immediately. A bot that has grown out of its zone level
+# quests are followed once the bot has no objective left in the zone it is
+# standing in (see ZoneDwellTime and ZoneReturnCooldown). A bot that has grown
+# out of its zone level
 # bracket moves on to a higher bracket zone (see BracketMargin). Otherwise
 # migration starts after the bot has made no XP or quest progress for
 # NoProgressTimeout seconds (plus a stable per-character 0-5 minute jitter).
@@ -1112,6 +1114,17 @@ AiPlayerbot.ZoneProgression.RetryCooldown = 1800
 # bracket maximum is reached.
 # Default: 1
 AiPlayerbot.ZoneProgression.BracketMargin = 1
+
+# Seconds a bot works in a zone it just migrated to before a cross-zone quest
+# may pull it out again. Stops a quest log holding objectives in two adjacent
+# zones from turning into a permanent round trip.
+# Default: 600
+AiPlayerbot.ZoneProgression.ZoneDwellTime = 600
+
+# Seconds a zone the bot travelled away from stays barred as a cross-zone quest
+# destination, so an arrival cannot immediately reverse the trip that produced it.
+# Default: 1800
+AiPlayerbot.ZoneProgression.ZoneReturnCooldown = 1800
 
 # Control probability weights for RPG status of bots. Takes effect only when the status meets its premise.​
 # Sum of weights need not be 100. Set to 0 to disable the status.

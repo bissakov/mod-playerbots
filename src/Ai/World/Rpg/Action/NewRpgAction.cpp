@@ -219,7 +219,7 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
         {
             WorldPosition breadcrumbDestination;
             uint32 breadcrumbQuest = 0;
-            if (FindCrossZoneBreadcrumb(breadcrumbDestination, breadcrumbQuest))
+            if (CanStartBreadcrumbTravel() && FindCrossZoneBreadcrumb(breadcrumbDestination, breadcrumbQuest))
             {
                 if (StartZoneTravel(breadcrumbDestination, breadcrumbQuest, true))
                     return true;
@@ -380,9 +380,7 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
             if (bot->GetZoneId() == data.destinationZoneId && bot->GetExactDist(data.destination) < 80.0f)
             {
                 uint32 resumeQuestId = data.resumeQuestId;
-                info.lastProgressAt = getMSTime();
-                botAI->rpgStatistic.zoneArrivals++;
-                LOG_INFO("playerbots", "[New RPG] {} arrived in zone {}", bot->GetName(), data.destinationZoneId);
+                NoteZoneArrival(data.destinationZoneId);
                 if (resumeQuestId)
                 {
                     if (Quest const* quest = sObjectMgr->GetQuestTemplate(resumeQuestId))
@@ -606,14 +604,31 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
             botAI->rpgInfo.ChangeToIdle();
             return true;
         }
-        uint32 rndIdx = urand(0, poiInfo.size() - 1);
-        int32 objectiveIdx = poiInfo[rndIdx].objectiveIdx;
-        data.lastReachPOI = 0;
-        data.pos = poiInfo[rndIdx].pos;
-        data.objectiveIdx = objectiveIdx;
-        data.siteId = poiInfo[rndIdx].siteId;
+        // An objective in the zone the bot is standing in is worked before one that needs a
+        // zone crossing, so a quest log spanning two zones stops deciding by dice roll where
+        // the bot walks next.
+        std::vector<POIInfo> localPoi;
+        std::vector<POIInfo> remotePoi;
+        SplitWorkableObjectives(poiInfo, localPoi, remotePoi);
 
-        if (data.pos.GetMapId() != bot->GetMapId() || GetPositionZoneId(data.pos) != bot->GetZoneId())
+        std::vector<POIInfo> const& selectable = localPoi.empty() ? remotePoi : localPoi;
+        if (selectable.empty())
+        {
+            botAI->rpgInfo.ChangeToIdle();
+            return true;
+        }
+
+        uint32 rndIdx = urand(0, selectable.size() - 1);
+        int32 objectiveIdx = selectable[rndIdx].objectiveIdx;
+        data.lastReachPOI = 0;
+        data.pos = selectable[rndIdx].pos;
+        data.objectiveIdx = objectiveIdx;
+        data.siteId = selectable[rndIdx].siteId;
+
+        // The same test that classified the objective decides whether reaching it is a walk or
+        // a migration. Comparing zone ids here instead turned an objective just across a border
+        // into a hub-to-hub journey, and that journey is what the bot then reversed.
+        if (!IsLocalObjective(data.pos, GetPositionZoneId(data.pos)))
         {
             if (StartZoneTravel(data.pos, questId, true))
                 return true;
@@ -707,8 +722,16 @@ bool NewRpgDoQuestAction::DoCompletedQuest(NewRpgInfo::DoQuest& data)
         data.objectiveIdx = -1;
         data.siteId = poiInfo[0].siteId;
 
-        if (data.pos.GetMapId() != bot->GetMapId() || GetPositionZoneId(data.pos) != bot->GetZoneId())
+        uint32 turnInZone = GetPositionZoneId(data.pos);
+        if (!IsLocalObjective(data.pos, turnInZone))
         {
+            if (!CanFollowCrossZoneObjective(turnInZone, -1))
+            {
+                data.pos = WorldPosition();
+                botAI->rpgInfo.ChangeToIdle();
+                return true;
+            }
+
             if (StartZoneTravel(data.pos, questId, true))
                 return true;
             botAI->rpgInfo.ChangeToIdle();
@@ -827,9 +850,7 @@ bool NewRpgTravelZoneAction::Execute(Event /*event*/)
     if (bot->GetZoneId() == data->destinationZoneId && bot->GetExactDist(data->destination) < 80.0f)
     {
         uint32 resumeQuestId = data->resumeQuestId;
-        botAI->rpgInfo.lastProgressAt = getMSTime();
-        botAI->rpgStatistic.zoneArrivals++;
-        LOG_INFO("playerbots", "[New RPG] {} arrived in zone {}", bot->GetName(), data->destinationZoneId);
+        NoteZoneArrival(data->destinationZoneId);
         if (resumeQuestId)
         {
             if (Quest const* quest = sObjectMgr->GetQuestTemplate(resumeQuestId))

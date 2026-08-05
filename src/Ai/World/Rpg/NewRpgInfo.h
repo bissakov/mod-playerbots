@@ -131,6 +131,18 @@ struct NewRpgInfo
     uint32 lastPlayerUnstuckAt{0};
     // END MOVE_FAR
 
+    // A zone the bot travelled away from, and when the trip that left it started. Keeps a
+    // cross-zone quest from sending the bot straight back into a zone it just left.
+    struct ZoneDeparture
+    {
+        uint32 zoneId{0};
+        uint32 leftAt{0};
+    };
+    std::vector<ZoneDeparture> recentZoneDepartures;
+    // Timestamp of the last zone migration arrival, so the bot works where it landed for a
+    // while before another cross-zone quest may pull it out.
+    uint32 lastZoneArrivalAt{0};
+
     // In-memory only. A fresh PlayerbotAI instance recalculates these after login.
     uint64 progressSignature{0};
     uint32 lastProgressCheckAt{0};
@@ -179,8 +191,11 @@ struct NewRpgInfo
     void ChangeToIdle();
     bool CanChangeTo(NewRpgStatus status);
     void Reset();
+    void ResetKeepingZoneMemory();
     void SetMoveFarTo(WorldPosition pos);
     void ResetLocalRouteFailures();
+    void NoteZoneDeparture(uint32 zoneId);
+    bool LeftZoneRecently(uint32 zoneId, uint32 withinMs) const;
     std::string ToString();
 };
 

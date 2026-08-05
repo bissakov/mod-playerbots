@@ -69,11 +69,18 @@ protected:
     bool GetQuestPOIPosAndObjectiveIdx(uint32 questId, std::vector<POIInfo>& poiInfo, bool toComplete = false);
     bool CheckProgress(bool& checked);
     bool FindCrossZoneBreadcrumb(WorldPosition& destination, uint32& questId);
+    bool IsLocalObjective(WorldPosition const& pos, uint32 poiZone) const;
+    bool CanFollowCrossZoneObjective(uint32 poiZone, int32 objectiveIdx) const;
+    void SplitWorkableObjectives(std::vector<POIInfo> const& poiInfo, std::vector<POIInfo>& local,
+                                 std::vector<POIInfo>& remote) const;
     bool StartZoneTravel(WorldPosition requestedDestination = WorldPosition(), uint32 resumeQuestId = 0,
                          bool breadcrumb = false, std::vector<uint32> failedHubExclusions = {},
                          uint32 advancementBracketHigh = 0);
     bool HasOutgrownCurrentZone(uint32& bracketHigh) const;
+    bool HasOutgrownZone(uint32 zoneId, uint32& bracketHigh) const;
     bool StartZoneAdvancementTravel();
+    void NoteZoneArrival(uint32 destinationZoneId);
+    bool CanStartBreadcrumbTravel() const;
     bool RebuildZoneTravelRoute(NewRpgInfo::TravelZone& data);
     bool SelectAlternateZoneHub(NewRpgInfo::TravelZone& data);
     void FinishZoneTravelFailure();

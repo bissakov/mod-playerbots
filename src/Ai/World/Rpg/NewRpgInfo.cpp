@@ -6,6 +6,7 @@
 
 #include "NewRpgInfo.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "Timer.h"
@@ -110,6 +111,15 @@ void NewRpgInfo::Reset()
     startT = getMSTime();
 }
 
+void NewRpgInfo::ResetKeepingZoneMemory()
+{
+    std::vector<ZoneDeparture> departures = std::move(recentZoneDepartures);
+    uint32 arrivalAt = lastZoneArrivalAt;
+    *this = NewRpgInfo();
+    recentZoneDepartures = std::move(departures);
+    lastZoneArrivalAt = arrivalAt;
+}
+
 void NewRpgInfo::SetMoveFarTo(WorldPosition pos)
 {
     nearestMoveFarDis = FLT_MAX;
@@ -122,6 +132,50 @@ void NewRpgInfo::ResetLocalRouteFailures()
 {
     localRouteFailureAnchor = WorldPosition();
     consecutiveLocalRouteFailures = 0;
+}
+
+void NewRpgInfo::NoteZoneDeparture(uint32 zoneId)
+{
+    if (!zoneId)
+        return;
+
+    uint32 now = getMSTime();
+    for (ZoneDeparture& departure : recentZoneDepartures)
+    {
+        if (departure.zoneId != zoneId)
+            continue;
+
+        departure.leftAt = now;
+        return;
+    }
+
+    // A handful of zones is enough to cover the neighbours a bot can bounce between, and the
+    // oldest entry is the one whose cooldown is closest to expiring anyway.
+    constexpr std::size_t maxRememberedZones = 8;
+    if (recentZoneDepartures.size() >= maxRememberedZones)
+    {
+        auto oldest = std::min_element(recentZoneDepartures.begin(), recentZoneDepartures.end(),
+                                       [](ZoneDeparture const& left, ZoneDeparture const& right)
+                                       {
+                                           return GetMSTimeDiffToNow(left.leftAt) >
+                                                  GetMSTimeDiffToNow(right.leftAt);
+                                       });
+        recentZoneDepartures.erase(oldest);
+    }
+
+    recentZoneDepartures.push_back({zoneId, now});
+}
+
+bool NewRpgInfo::LeftZoneRecently(uint32 zoneId, uint32 withinMs) const
+{
+    if (!zoneId || !withinMs)
+        return false;
+
+    for (ZoneDeparture const& departure : recentZoneDepartures)
+        if (departure.zoneId == zoneId && GetMSTimeDiffToNow(departure.leftAt) < withinMs)
+            return true;
+
+    return false;
 }
 
 NewRpgStatus NewRpgInfo::GetStatus()
