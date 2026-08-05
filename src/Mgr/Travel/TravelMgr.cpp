@@ -4559,6 +4559,37 @@ std::vector<TravelMgr::ZoneHub> TravelMgr::GetFactionCompatibleLevelHubs(Player 
     return result;
 }
 
+bool TravelMgr::IsOpenWater(uint32 mapId, float x, float y, float z)
+{
+    // Water a bot can wade or briefly swim through stays usable: only water deep enough that the
+    // bot can never touch the bottom counts as open water.
+    constexpr float openWaterMinDepth = 8.0f;
+
+    Map* map = sMapMgr->FindMap(mapId, 0);
+    if (!map)
+        return false;
+
+    LiquidData const liquid = map->GetLiquidData(PHASEMASK_NORMAL, x, y, z, DEFAULT_COLLISION_HEIGHT,
+                                                 MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN);
+    if (liquid.Status == LIQUID_MAP_NO_WATER || liquid.Level <= INVALID_HEIGHT)
+        return false;
+
+    // Anything above the water line stands on something, including quest POI centres whose height
+    // resolves to the surface itself.
+    if (z > liquid.Level + 1.0f)
+        return false;
+
+    float floor = liquid.DepthLevel;
+    if (floor <= INVALID_HEIGHT)
+        floor = map->GetHeight(PHASEMASK_NORMAL, x, y, liquid.Level, true, DEFAULT_HEIGHT_SEARCH);
+
+    // No floor within reach at all is the clearest open water case there is.
+    if (floor <= INVALID_HEIGHT)
+        return true;
+
+    return liquid.Level - floor > openWaterMinDepth;
+}
+
 bool TravelMgr::GetZoneLevelBracket(uint32 zoneId, LevelBracket& bracket) const
 {
     auto itr = zone2LevelBracket.find(zoneId);
@@ -4715,6 +4746,7 @@ void TravelMgr::PrepareDestinationCache()
     uint32 flightMastersCount = 0;
     uint32 innkeepersCount = 0;
     uint32 bankerCount = 0;
+    uint32 openWaterLocsSkipped = 0;
 
     LOG_INFO("playerbots", "Preparing destination caches for {} levels...", maxLevel);
     // Temporary map to group creatures by entry and area
@@ -4928,6 +4960,15 @@ void TravelMgr::PrepareDestinationCache()
                 }
             }
 
+            // Spawns that live in the sea or in a deep lake are legitimate creatures but not
+            // legitimate grind destinations: a bot sent there ends up floating at the surface of
+            // an ocean zone with nothing it can path to, and stays there.
+            if (IsOpenWater(std::get<0>(gridTuple), nearest->posX, nearest->posY, nearest->posZ))
+            {
+                openWaterLocsSkipped++;
+                continue;
+            }
+
             for (int32 l = (int32)level - (int32)sPlayerbotAIConfig.randomBotTeleLowerLevel;
                  l <= (int32)level + (int32)sPlayerbotAIConfig.randomBotTeleHigherLevel; l++)
             {
@@ -4991,4 +5032,5 @@ void TravelMgr::PrepareDestinationCache()
         }
     }
     LOG_INFO("playerbots", ">> {} flight masters and {} innkeepers and {} banker locations for level collected.", flightMastersCount, innkeepersCount, bankerCount);
+    LOG_INFO("playerbots", ">> {} grind locations rejected because they sit in open water.", openWaterLocsSkipped);
 }

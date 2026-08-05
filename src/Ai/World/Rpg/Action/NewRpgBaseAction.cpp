@@ -368,6 +368,12 @@ bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint3
             if (poi.pos.GetMapId() == bot->GetMapId() && poiZone == currentZone)
                 continue;
 
+            // Quest POI centres can fall in the sea, most often for coastal objectives on the
+            // island starter zones. Walking to one leaves the bot floating in an ocean zone with
+            // nothing reachable, so it is never a legitimate migration target.
+            if (TravelMgr::IsOpenWater(poi.pos))
+                continue;
+
             // Area lookups around subzone boundaries can disagree even for a
             // nearby objective in the same top-level zone. Normal quest movement
             // can walk there directly; treating it as a zone migration requires a
@@ -496,6 +502,7 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
     // zone against that, so the bot can never finish: it walks the route and then
     // replans until it burns through its retries. Leave it to the hub candidates.
     if (candidates.empty() && breadcrumb && requestedDestination && requestedZone &&
+        !TravelMgr::IsOpenWater(requestedDestination) &&
         !botAI->IsPositionAvoided(FailedObjectiveType::ZoneTravel, requestedDestination, 0, resumeQuestId))
     {
         directAttempted = true;
@@ -1325,6 +1332,11 @@ WorldPosition NewRpgBaseAction::SelectRandomGrindPos(Player* bot)
         uint32 idx = urand(0, lo_prepared_locs.size() - 1);
         dest = lo_prepared_locs[idx];
     }
+    // The cached grind locations exclude open water, but a cell can still resolve to water after
+    // a rounding-tolerant lookup, and the bot must never be sent to a point it can only float at.
+    if (dest.IsValid() && TravelMgr::IsOpenWater(dest))
+        dest = WorldPosition();
+
     if (dest.IsValid())
         LOG_DEBUG("playerbots",
                   "[New RPG] Bot {} select random grind pos Map:{} X:{} Y:{} Z:{} ({}+{} available in {})",

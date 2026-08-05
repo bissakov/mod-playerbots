@@ -697,6 +697,8 @@ bool PlayerbotAIConfig::Initialize()
     organicProgression = sConfigMgr->GetOption<bool>("AiPlayerbot.OrganicProgression", false);
     failedObjectiveAvoidance = sConfigMgr->GetOption<bool>("AiPlayerbot.FailedObjectiveAvoidance", true);
     resurrectionSicknessRecovery = sConfigMgr->GetOption<bool>("AiPlayerbot.ResurrectionSicknessRecovery", true);
+    openWaterRecovery = sConfigMgr->GetOption<bool>("AiPlayerbot.OpenWaterRecovery", true);
+    openWaterRescueSeconds = sConfigMgr->GetOption<uint32>("AiPlayerbot.OpenWaterRescueSeconds", 300);
     failedObjectiveDeathThreshold =
         std::max<uint32>(1, sConfigMgr->GetOption<uint32>("AiPlayerbot.FailedObjectiveDeathThreshold", 2));
     failedObjectiveFailureWindow =

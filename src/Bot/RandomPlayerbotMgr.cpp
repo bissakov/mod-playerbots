@@ -3154,6 +3154,8 @@ void RandomPlayerbotMgr::PrintStats()
                  rpgStasticTotal.zoneReplans, rpgStasticTotal.zoneRouteFailures);
         LOG_INFO("playerbots", "Bots total player unstuck recoveries: nudges {}, hearthstones {}",
                  rpgStasticTotal.playerUnstuckNudges, rpgStasticTotal.playerUnstuckHearths);
+        LOG_INFO("playerbots", "Bots total open water recoveries: swims {}, rescues {}", rpgStasticTotal.openWaterSwims,
+                 rpgStasticTotal.openWaterRescues);
     }
 
     LOG_INFO("playerbots", "Bots engine:", dead);

@@ -902,6 +902,16 @@ public:
     bool SelectAuctioneerByMap(Player* bot, NpcLocation& outAuctioneer);
     const std::vector<WorldLocation>& GetLocsPerLevelCache(uint8 level) { return locsPerLevelCache[level]; }
 
+    // A position is "open water" when the liquid there is too deep to stand in: the sea and the
+    // deep parts of lakes. There is no navigation mesh over it, so a bot sent there floats at the
+    // surface with nothing reachable around it. Never use such a position as a destination.
+    static bool IsOpenWater(uint32 mapId, float x, float y, float z);
+    static bool IsOpenWater(WorldLocation const& location)
+    {
+        return IsOpenWater(location.GetMapId(), location.GetPositionX(), location.GetPositionY(),
+                           location.GetPositionZ());
+    }
+
     template <class D, class W, class URBG>
     void weighted_shuffle(D first, D last, W first_weight, W last_weight, URBG&& g)
     {

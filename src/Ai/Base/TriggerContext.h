@@ -248,6 +248,7 @@ public:
         creators["travel flight status"] = &TriggerContext::travel_flight_status;
         creators["travel zone status"] = &TriggerContext::travel_zone_status;
         creators["outdoor pvp status"] = &TriggerContext::outdoor_pvp_status;
+        creators["stranded in open water"] = &TriggerContext::stranded_in_open_water;
         creators["can self resurrect"] = &TriggerContext::can_self_resurrect;
         creators["can fish"] = &TriggerContext::can_fish;
         creators["can use fishing bobber"] = &TriggerContext::can_use_fishing_bobber;
@@ -469,6 +470,7 @@ private:
     static Trigger* travel_flight_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_TRAVEL_FLIGHT); }
     static Trigger* travel_zone_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_TRAVEL_ZONE); }
     static Trigger* outdoor_pvp_status(PlayerbotAI* botAI) { return new NewRpgStatusTrigger(botAI, RPG_OUTDOOR_PVP); }
+    static Trigger* stranded_in_open_water(PlayerbotAI* botAI) { return new StrandedInOpenWaterTrigger(botAI); }
     static Trigger* can_self_resurrect(PlayerbotAI* ai) { return new SelfResurrectTrigger(ai); }
     static Trigger* can_fish(PlayerbotAI* ai) { return new CanFishTrigger(ai); }
     static Trigger* can_use_fishing_bobber(PlayerbotAI* ai) { return new CanUseFishingBobberTrigger(ai); }

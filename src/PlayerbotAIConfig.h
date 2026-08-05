@@ -379,6 +379,8 @@ public:
     bool organicProgression;
     bool failedObjectiveAvoidance;
     bool resurrectionSicknessRecovery;
+    bool openWaterRecovery;
+    uint32 openWaterRescueSeconds;
     uint32 failedObjectiveDeathThreshold;
     uint32 failedObjectiveFailureWindow;
     float failedObjectiveSiteRadius;

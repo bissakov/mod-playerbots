@@ -1031,6 +1031,15 @@ AiPlayerbot.FailedObjectiveSiteRadius = 120.0
 # Default: 1 (enabled)
 AiPlayerbot.ResurrectionSicknessRecovery = 1
 
+# A bot that ends up swimming in water too deep to stand in has no reachable destination there, so
+# it swims back towards the nearest known land anchor instead of floating in place. Bots crossing a
+# river or a lake are unaffected: the recovery only starts after a minute of continuous open water.
+# OpenWaterRescueSeconds is the time in open water after which a bot that could not swim out is
+# teleported to that land anchor; 0 disables the teleport and leaves the bot swimming.
+# Defaults: enabled, 300 seconds
+AiPlayerbot.OpenWaterRecovery = 1
+AiPlayerbot.OpenWaterRescueSeconds = 300
+
 # Spells every randombot will learn automatically and every altbot will learn with maintenance
 # Default: 54197 (Cold Weather Flying)
 AiPlayerbot.RandomBotSpellIds = "54197"

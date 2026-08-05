@@ -135,6 +135,12 @@ struct NewRpgInfo
     uint32 migrationCooldownStartedAt{0};
     bool progressInitialized{false};
 
+    // Timestamp of the first tick the bot was found in water too deep to stand in, cleared as soon
+    // as it reaches water it can stand in or land.
+    uint32 openWaterSince{0};
+    WorldPosition openWaterAnchor{};
+    bool openWaterRecovering{false};
+
     using RpgData = std::variant<
         Idle,
         GoGrind,
@@ -185,6 +191,8 @@ struct NewRpgStatistic
     uint32 zoneRouteFailures{0};
     uint32 playerUnstuckNudges{0};
     uint32 playerUnstuckHearths{0};
+    uint32 openWaterSwims{0};
+    uint32 openWaterRescues{0};
     NewRpgStatistic operator+(const NewRpgStatistic& other) const
     {
         NewRpgStatistic result;
@@ -199,6 +207,8 @@ struct NewRpgStatistic
         result.zoneRouteFailures = this->zoneRouteFailures + other.zoneRouteFailures;
         result.playerUnstuckNudges = this->playerUnstuckNudges + other.playerUnstuckNudges;
         result.playerUnstuckHearths = this->playerUnstuckHearths + other.playerUnstuckHearths;
+        result.openWaterSwims = this->openWaterSwims + other.openWaterSwims;
+        result.openWaterRescues = this->openWaterRescues + other.openWaterRescues;
         return result;
     }
     NewRpgStatistic& operator+=(const NewRpgStatistic& other)
@@ -214,6 +224,8 @@ struct NewRpgStatistic
         this->zoneRouteFailures += other.zoneRouteFailures;
         this->playerUnstuckNudges += other.playerUnstuckNudges;
         this->playerUnstuckHearths += other.playerUnstuckHearths;
+        this->openWaterSwims += other.openWaterSwims;
+        this->openWaterRescues += other.openWaterRescues;
         return *this;
     }
 };

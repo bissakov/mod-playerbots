@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 #include "AreaDefines.h"
 #include "BroadcastHelper.h"
@@ -16,6 +17,8 @@
 #include "GossipDef.h"
 #include "IVMapMgr.h"
 #include "MaintenanceValues.h"
+#include "Map.h"
+#include "MotionMaster.h"
 #include "NewRpgInfo.h"
 #include "NewRpgStrategy.h"
 #include "Object.h"
@@ -918,5 +921,189 @@ bool NewRpgTravelZoneAction::Execute(Event /*event*/)
         return routeFailed();
     if (result == ZoneTravelStepResult::Complete)
         data->routeStage++;
+    return true;
+}
+
+bool NewRpgLeaveOpenWaterAction::Execute(Event /*event*/)
+{
+    NewRpgInfo& info = botAI->rpgInfo;
+    if (!sPlayerbotAIConfig.openWaterRecovery || !botAI->IsAutonomousRandomBot() || !bot->IsAlive() ||
+        bot->IsInFlight() || bot->InBattleground() || bot->GetTransport() ||
+        !TravelMgr::IsOpenWater(WorldPosition(bot)))
+    {
+        info.openWaterSince = 0;
+        info.openWaterRecovering = false;
+        return false;
+    }
+
+    // Underwater objectives are legitimate quest work. A bot standing on its own objective is not
+    // stranded, so leave it alone until it either finishes or gives the objective up.
+    if (auto const* quest = std::get_if<NewRpgInfo::DoQuest>(&info.data))
+    {
+        if (quest->pos != WorldPosition() && quest->pos.GetMapId() == bot->GetMapId() &&
+            bot->GetExactDist(quest->pos) < 250.0f)
+        {
+            info.openWaterSince = 0;
+            info.openWaterRecovering = false;
+            return false;
+        }
+    }
+
+    if (!info.openWaterSince)
+    {
+        info.openWaterSince = getMSTime();
+        info.openWaterAnchor = WorldPosition(bot);
+        return false;
+    }
+
+    // A bot that is genuinely crossing water keeps making headway. Only water it cannot get out of
+    // counts as stranding, so restart the clock while it is still covering ground.
+    if (!info.openWaterRecovering && info.openWaterAnchor.GetMapId() == bot->GetMapId() &&
+        bot->GetExactDist(info.openWaterAnchor) > 200.0f)
+    {
+        info.openWaterSince = getMSTime();
+        info.openWaterAnchor = WorldPosition(bot);
+        return false;
+    }
+
+    uint32 const strandedFor = GetMSTimeDiffToNow(info.openWaterSince);
+    if (strandedFor < strandedGrace)
+        return false;
+
+    WorldPosition anchor = FindLandAnchor();
+    if (anchor == WorldPosition())
+    {
+        LOG_WARN("playerbots", "[New RPG] {} is stranded in open water in zone {} with no known land anchor",
+                 bot->GetName(), bot->GetZoneId());
+        return false;
+    }
+
+    if (!info.openWaterRecovering)
+    {
+        info.openWaterRecovering = true;
+        botAI->rpgStatistic.openWaterSwims++;
+        LOG_INFO("playerbots",
+                 "[New RPG] {} swimming out of open water in zone {} towards ({}, {:.1f}, {:.1f}, {:.1f})",
+                 bot->GetName(), bot->GetZoneId(), anchor.GetMapId(), anchor.GetPositionX(), anchor.GetPositionY(),
+                 anchor.GetPositionZ());
+    }
+
+    // Whatever the bot planned from open water is unreachable from here, and that plan is what
+    // keeps it swimming in place. Drop it so normal behaviour restarts once it reaches land.
+    if (info.GetStatus() != RPG_IDLE)
+    {
+        info.SetMoveFarTo(WorldPosition());
+        info.ChangeToIdle();
+    }
+
+    uint32 const rescueTimeout = sPlayerbotAIConfig.openWaterRescueSeconds * IN_MILLISECONDS;
+    if (rescueTimeout && strandedFor >= rescueTimeout && TeleportToLand(anchor))
+        return true;
+
+    return SwimToward(anchor);
+}
+
+WorldPosition NewRpgLeaveOpenWaterAction::FindLandAnchor()
+{
+    WorldPosition current(bot);
+    WorldPosition nearest;
+    float nearestDistance = std::numeric_limits<float>::max();
+
+    // Level hubs are innkeepers, flight masters and race start points: land positions by
+    // construction, and faction safe for this bot.
+    for (TravelMgr::ZoneHub const& hub : sTravelMgr.GetFactionCompatibleLevelHubs(bot))
+    {
+        if (hub.position.GetMapId() != current.GetMapId())
+            continue;
+
+        float const distance = current.fDist(hub.position);
+        if (distance < nearestDistance)
+        {
+            nearestDistance = distance;
+            nearest = hub.position;
+        }
+    }
+
+    if (nearest != WorldPosition())
+        return nearest;
+
+    // No hub for this level bracket on this map: the bind point is still a bot-specific inn or
+    // race start position, so it remains a safe place to stand.
+    if (bot->m_homebindMapId == current.GetMapId())
+        return WorldPosition(bot->m_homebindMapId, bot->m_homebindX, bot->m_homebindY, bot->m_homebindZ);
+
+    return WorldPosition();
+}
+
+bool NewRpgLeaveOpenWaterAction::SwimToward(WorldPosition const& anchor)
+{
+    // Deep water has no navigation mesh, so committed movement must be allowed to finish rather
+    // than being recomputed into a lower priority action every tick.
+    if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+        return true;
+
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+
+    float const x = bot->GetPositionX();
+    float const y = bot->GetPositionY();
+    float const z = bot->GetPositionZ();
+    float const baseAngle = bot->GetAngle(anchor.GetPositionX(), anchor.GetPositionY());
+
+    // Straight towards the anchor first, then wider offsets so an island or a cliff on the direct
+    // line does not pin the bot against it.
+    static constexpr float angleOffsets[] = {0.0f, static_cast<float>(M_PI) / 6.0f, -static_cast<float>(M_PI) / 6.0f,
+                                             static_cast<float>(M_PI) / 3.0f, -static_cast<float>(M_PI) / 3.0f};
+    for (float offset : angleOffsets)
+    {
+        float const angle = baseAngle + offset;
+        float dx = x + std::cos(angle) * swimStep;
+        float dy = y + std::sin(angle) * swimStep;
+        float dz = z;
+
+        // Swim along the surface, and step up onto the shore as soon as there is ground above the
+        // water line to stand on.
+        float const ground = map->GetHeight(bot->GetPhaseMask(), dx, dy, z + 2.0f);
+        float const water = map->GetWaterLevel(dx, dy);
+        if (ground > INVALID_HEIGHT && ground > water)
+            dz = ground + 0.5f;
+        else if (water > INVALID_HEIGHT)
+            dz = water;
+
+        if (!map->CheckCollisionAndGetValidCoords(bot, x, y, z, dx, dy, dz))
+            continue;
+
+        if (MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true))
+            return true;
+    }
+
+    return false;
+}
+
+bool NewRpgLeaveOpenWaterAction::TeleportToLand(WorldPosition const& anchor)
+{
+    // Keep the rescue invisible to real players and never yank a bot out of a fight.
+    if (bot->IsInCombat() || botAI->HasPlayerNearby(150.0f))
+        return false;
+
+    NewRpgInfo& info = botAI->rpgInfo;
+    LOG_WARN("playerbots",
+             "[New RPG] {} could not swim out of open water in zone {} for {} seconds and was returned to land at "
+             "({}, {:.1f}, {:.1f}, {:.1f})",
+             bot->GetName(), bot->GetZoneId(), GetMSTimeDiffToNow(info.openWaterSince) / IN_MILLISECONDS,
+             anchor.GetMapId(), anchor.GetPositionX(), anchor.GetPositionY(), anchor.GetPositionZ());
+
+    bot->GetMotionMaster()->Clear();
+    botAI->Reset(true);
+    bot->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TELEPORTED | AURA_INTERRUPT_FLAG_CHANGE_MAP);
+    bot->TeleportTo(anchor.GetMapId(), anchor.GetPositionX(), anchor.GetPositionY(), anchor.GetPositionZ(),
+                    bot->GetOrientation());
+
+    info.openWaterSince = 0;
+    info.openWaterRecovering = false;
+    info.SetMoveFarTo(WorldPosition());
+    info.ChangeToIdle();
+    botAI->rpgStatistic.openWaterRescues++;
     return true;
 }

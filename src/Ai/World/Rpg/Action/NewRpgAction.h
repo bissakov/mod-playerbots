@@ -128,4 +128,24 @@ public:
     bool Execute(Event event) override;
 };
 
+/// Brings a bot floating in water too deep to stand in back to land. Nothing there is reachable by
+/// mesh path, so the bot swims towards the nearest known land anchor and, if that fails for long
+/// enough, is teleported to it.
+class NewRpgLeaveOpenWaterAction : public NewRpgBaseAction
+{
+public:
+    NewRpgLeaveOpenWaterAction(PlayerbotAI* botAI) : NewRpgBaseAction(botAI, "new rpg leave open water") {}
+    bool Execute(Event event) override;
+
+protected:
+    WorldPosition FindLandAnchor();
+    bool SwimToward(WorldPosition const& anchor);
+    bool TeleportToLand(WorldPosition const& anchor);
+
+    // Crossing a river or a lake is normal behaviour, so only water the bot has failed to leave
+    // for this long counts as being stranded.
+    static constexpr uint32 strandedGrace = MINUTE * IN_MILLISECONDS;
+    static constexpr float swimStep = 60.0f;
+};
+
 #endif

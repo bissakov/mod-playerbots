@@ -90,6 +90,16 @@ void NewRpgStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
             }
         )
     );
+    // Above every other rpg action: a bot floating in open water cannot reach any objective it
+    // could plan there, so getting back to land has to come first.
+    triggers.push_back(
+        new TriggerNode(
+            "stranded in open water",
+            {
+                NextAction("new rpg leave open water", 13.0f)
+            }
+        )
+    );
 }
 
 void NewRpgStrategy::InitMultipliers(std::vector<Multiplier*>&)
