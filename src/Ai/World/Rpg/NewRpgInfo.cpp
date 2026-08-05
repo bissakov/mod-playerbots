@@ -62,7 +62,7 @@ void NewRpgInfo::ChangeToTravelFlight(uint32 flightMasterEntry, WorldPosition fl
 
 void NewRpgInfo::ChangeToTravelZone(WorldPosition destination, uint32 destinationZoneId, uint32 resumeQuestId,
                                     bool breadcrumb, std::vector<ZoneTravelStep> route, float routeCost,
-                                    std::vector<uint32> failedHubExclusions)
+                                    std::vector<uint32> failedHubExclusions, uint32 advancementBracketHigh)
 {
     startT = getMSTime();
     TravelZone travel;
@@ -75,6 +75,7 @@ void NewRpgInfo::ChangeToTravelZone(WorldPosition destination, uint32 destinatio
     travel.lastMeaningfulPosition = WorldPosition();
     travel.lastMeaningfulMovementAt = startT;
     travel.breadcrumb = breadcrumb;
+    travel.advancementBracketHigh = advancementBracketHigh;
     data = std::move(travel);
 }
 
@@ -225,6 +226,7 @@ std::string NewRpgInfo::ToString()
             out << "\nrouteStage: " << arg.routeStage << "/" << arg.route.size();
             out << "\nretryCount: " << arg.retryCount;
             out << "\nbreadcrumbQuest: " << arg.resumeQuestId;
+            out << "\nadvancementBracketHigh: " << arg.advancementBracketHigh;
         }
         else
             out << "UNKNOWN";

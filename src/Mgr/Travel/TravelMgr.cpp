@@ -4549,6 +4549,12 @@ std::vector<TravelMgr::ZoneHub> TravelMgr::GetFactionCompatibleLevelHubs(Player 
         if (bracket == zone2LevelBracket.end() || !bracket->second.InsideBracket(bot->GetLevel()))
             continue;
 
+        // Neutral innkeepers exist deep inside enemy territory, Ratchet being the obvious one,
+        // so a hub landing in both faction caches is not by itself faction safe. Sending an
+        // Alliance bot that just outlevelled Dun Morogh across the Barrens is a death march.
+        if (!IsZoneFactionSafe(zoneId, bot->GetTeamId()))
+            continue;
+
         auto key = std::make_tuple(zoneId, static_cast<int32>(position.GetPositionX() / 10.0f),
                                    static_cast<int32>(position.GetPositionY() / 10.0f));
         if (!seen.insert(key).second)
@@ -4588,6 +4594,25 @@ bool TravelMgr::IsOpenWater(uint32 mapId, float x, float y, float z)
         return true;
 
     return liquid.Level - floor > openWaterMinDepth;
+}
+
+bool TravelMgr::IsZoneFactionSafe(uint32 zoneId, TeamId team)
+{
+    AreaTableEntry const* area = sAreaTableStore.LookupEntry(zoneId);
+    if (!area)
+        return false;
+
+    switch (area->team)
+    {
+        case AREATEAM_ALLY:
+            return team == TEAM_ALLIANCE;
+        case AREATEAM_HORDE:
+            return team == TEAM_HORDE;
+        default:
+            // Contested and sanctuary zones carry AREATEAM_NONE or AREATEAM_ANY and stay open
+            // to both factions.
+            return true;
+    }
 }
 
 bool TravelMgr::GetZoneLevelBracket(uint32 zoneId, LevelBracket& bracket) const

@@ -393,6 +393,7 @@ public:
     bool zoneProgressionEnabled;
     uint32 zoneProgressionNoProgressTimeout;
     uint32 zoneProgressionRetryCooldown;
+    uint32 zoneProgressionBracketMargin;
     std::unordered_map<NewRpgStatus, uint32> RpgStatusProbWeight;
     bool syncLevelWithPlayers;
     bool autoLearnQuestSpells;

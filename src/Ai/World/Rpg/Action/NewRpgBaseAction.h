@@ -70,7 +70,10 @@ protected:
     bool CheckProgress(bool& checked);
     bool FindCrossZoneBreadcrumb(WorldPosition& destination, uint32& questId);
     bool StartZoneTravel(WorldPosition requestedDestination = WorldPosition(), uint32 resumeQuestId = 0,
-                         bool breadcrumb = false, std::vector<uint32> failedHubExclusions = {});
+                         bool breadcrumb = false, std::vector<uint32> failedHubExclusions = {},
+                         uint32 advancementBracketHigh = 0);
+    bool HasOutgrownCurrentZone(uint32& bracketHigh) const;
+    bool StartZoneAdvancementTravel();
     bool RebuildZoneTravelRoute(NewRpgInfo::TravelZone& data);
     bool SelectAlternateZoneHub(NewRpgInfo::TravelZone& data);
     void FinishZoneTravelFailure();

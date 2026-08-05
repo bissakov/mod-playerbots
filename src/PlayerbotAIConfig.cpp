@@ -718,6 +718,7 @@ bool PlayerbotAIConfig::Initialize()
         sConfigMgr->GetOption<uint32>("AiPlayerbot.ZoneProgression.NoProgressTimeout", 1800);
     zoneProgressionRetryCooldown =
         sConfigMgr->GetOption<uint32>("AiPlayerbot.ZoneProgression.RetryCooldown", 1800);
+    zoneProgressionBracketMargin = sConfigMgr->GetOption<uint32>("AiPlayerbot.ZoneProgression.BracketMargin", 1);
 
     RpgStatusProbWeight[RPG_WANDER_RANDOM] = sConfigMgr->GetOption<int32>("AiPlayerbot.RpgStatusProbWeight.WanderRandom", 15);
     RpgStatusProbWeight[RPG_WANDER_NPC] = sConfigMgr->GetOption<int32>("AiPlayerbot.RpgStatusProbWeight.WanderNpc", 20);

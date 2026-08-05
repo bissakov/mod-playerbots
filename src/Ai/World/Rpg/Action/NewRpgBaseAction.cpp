@@ -41,6 +41,7 @@
 #include "StatsWeightCalculator.h"
 #include "Timer.h"
 #include "TravelMgr.h"
+#include "World.h"
 #include "ZoneTravelPolicy.h"
 
 namespace
@@ -391,7 +392,7 @@ bool NewRpgBaseAction::FindCrossZoneBreadcrumb(WorldPosition& destination, uint3
 }
 
 bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint32 resumeQuestId, bool breadcrumb,
-                                       std::vector<uint32> failedHubExclusions)
+                                       std::vector<uint32> failedHubExclusions, uint32 advancementBracketHigh)
 {
     struct Candidate
     {
@@ -399,10 +400,13 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
         ZoneTravelRoute route;
     };
 
+    bool advancement = advancementBracketHigh != 0;
+
     uint32 requestedZone = requestedDestination ? GetPositionZoneId(requestedDestination) : 0;
     uint32 currentZone = bot->GetZoneId();
     WorldPosition current(bot);
     std::vector<TravelMgr::ZoneHub> hubs;
+    std::vector<TravelMgr::ZoneHub> offContinentHubs;
     std::vector<TravelMgr::ZoneHub> localHubs;
     for (TravelMgr::ZoneHub const& hub : sTravelMgr.GetFactionCompatibleLevelHubs(bot))
     {
@@ -421,9 +425,25 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
 
         if (hub.zoneId != currentZone)
         {
-            hubs.push_back(hub);
+            // Advancement only means something when the destination carries the bot further
+            // than the zone it grew out of: another zone of the same tier has just as little
+            // left to offer, and a starter zone swap is what this migration exists to avoid.
+            if (advancement && hub.bracket.high <= advancementBracketHigh)
+                continue;
+
+            // Players walk from Elwynn Forest to Westfall rather than sailing to Bloodmyst
+            // Isle. The route cost model undervalues boats and zeppelins, so keep another
+            // continent as a fallback for when the current one offers nothing.
+            if (advancement && hub.position.GetMapId() != current.GetMapId())
+                offContinentHubs.push_back(hub);
+            else
+                hubs.push_back(hub);
             continue;
         }
+
+        // A same-zone recovery walk cannot advance a bot out of its bracket.
+        if (advancement)
+            continue;
 
         // A nearby faction-safe hub gives a stalled bot somewhere useful to walk when the
         // travel graph cannot connect it to another zone. Keep the target outside the arrival
@@ -458,10 +478,12 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
         }
     };
     buildCandidates(hubs);
+    if (candidates.empty())
+        buildCandidates(offContinentHubs);
 
     std::size_t hubCandidates = candidates.size();
     std::size_t localHubCandidates = 0;
-    if (candidates.empty() && !breadcrumb)
+    if (candidates.empty() && !breadcrumb && !advancement)
     {
         for (TravelMgr::ZoneHub const& hub : localHubs)
         {
@@ -517,10 +539,11 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
 
     if (candidates.empty())
         LOG_WARN("playerbots",
-                 "[New RPG] {} StartZoneTravel gave up: breadcrumb {}, hubsAfterFilter {}, hubRoutes {}, "
-                 "localHubsAfterFilter {}, localHubRoutes {}, directAttempted {}, directRouted {}, requestedZone {}",
-                 bot->GetName(), breadcrumb, hubs.size(), hubCandidates, localHubs.size(), localHubCandidates,
-                 directAttempted, directRouted, requestedZone);
+                 "[New RPG] {} StartZoneTravel gave up: breadcrumb {}, advancementBracketHigh {}, "
+                 "hubsAfterFilter {}, offContinentHubs {}, hubRoutes {}, localHubsAfterFilter {}, "
+                 "localHubRoutes {}, directAttempted {}, directRouted {}, requestedZone {}",
+                 bot->GetName(), breadcrumb, advancementBracketHigh, hubs.size(), offContinentHubs.size(),
+                 hubCandidates, localHubs.size(), localHubCandidates, directAttempted, directRouted, requestedZone);
 
     if (candidates.empty())
         return false;
@@ -535,16 +558,61 @@ bool NewRpgBaseAction::StartZoneTravel(WorldPosition requestedDestination, uint3
 
     botAI->rpgInfo.ChangeToTravelZone(candidate.hub.position, candidate.hub.zoneId, resumeQuestId, breadcrumb,
                                       std::move(candidate.route.steps), candidate.route.cost,
-                                      std::move(failedHubExclusions));
+                                      std::move(failedHubExclusions), advancementBracketHigh);
     botAI->rpgStatistic.zoneTransitionsStarted++;
+    if (advancement)
+        botAI->rpgStatistic.zoneAdvancementsStarted++;
     if (!breadcrumb && candidate.hub.zoneId == currentZone)
         LOG_INFO("playerbots", "[New RPG] {} starting local recovery within zone {} at level {}",
                  bot->GetName(), currentZone, bot->GetLevel());
     else
+    {
+        char const* transitionKind = breadcrumb ? "breadcrumb" : (advancement ? "advancement" : "fallback");
         LOG_INFO("playerbots", "[New RPG] {} starting {} zone transition from zone {} to zone {} at level {}",
-                 bot->GetName(), breadcrumb ? "breadcrumb" : "fallback", currentZone, candidate.hub.zoneId,
-                 bot->GetLevel());
+                 bot->GetName(), transitionKind, currentZone, candidate.hub.zoneId, bot->GetLevel());
+    }
     return true;
+}
+
+bool NewRpgBaseAction::HasOutgrownCurrentZone(uint32& bracketHigh) const
+{
+    // The top-level brackets have nowhere above them, so a capped bot staying in one is not
+    // stuck, and asking for a higher bracket zone could only ever fail.
+    if (bot->GetLevel() >= sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
+        return false;
+
+    TravelMgr::LevelBracket bracket{};
+    if (!sTravelMgr.GetZoneLevelBracket(bot->GetZoneId(), bracket))
+        return false;
+
+    bracketHigh = bracket.high;
+
+    // Players leave a zone shortly before its content stops rewarding them, so the trigger
+    // fires a configurable number of levels early instead of waiting for the bracket maximum.
+    uint32 margin = sPlayerbotAIConfig.zoneProgressionBracketMargin;
+    return bracket.high <= bot->GetLevel() + margin;
+}
+
+bool NewRpgBaseAction::StartZoneAdvancementTravel()
+{
+    uint32 bracketHigh = 0;
+    if (!HasOutgrownCurrentZone(bracketHigh))
+        return false;
+
+    NewRpgInfo& info = botAI->rpgInfo;
+    if (info.advancementAttemptedAt && GetMSTimeDiffToNow(info.advancementAttemptedAt) <
+                                           sPlayerbotAIConfig.zoneProgressionRetryCooldown * IN_MILLISECONDS)
+        return false;
+
+    info.advancementAttemptedAt = getMSTime();
+    if (StartZoneTravel(WorldPosition(), 0, false, {}, bracketHigh))
+        return true;
+
+    botAI->rpgStatistic.zoneRouteFailures++;
+    LOG_DEBUG("playerbots",
+              "[New RPG] {} outgrew zone {} (bracket max {}) at level {} but found no higher bracket zone to travel to",
+              bot->GetName(), bot->GetZoneId(), bracketHigh, bot->GetLevel());
+    return false;
 }
 
 bool NewRpgBaseAction::RebuildZoneTravelRoute(NewRpgInfo::TravelZone& data)
@@ -578,7 +646,7 @@ bool NewRpgBaseAction::SelectAlternateZoneHub(NewRpgInfo::TravelZone& data)
 
     if (data.breadcrumb)
         return false;
-    return StartZoneTravel(WorldPosition(), 0, false, std::move(exclusions));
+    return StartZoneTravel(WorldPosition(), 0, false, std::move(exclusions), data.advancementBracketHigh);
 }
 
 void NewRpgBaseAction::FinishZoneTravelFailure()

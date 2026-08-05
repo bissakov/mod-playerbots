@@ -3149,9 +3149,10 @@ void RandomPlayerbotMgr::PrintStats()
         LOG_INFO("playerbots", "    Accepted: {}, Rewarded: {}, Dropped: {}", rpgStasticTotal.questAccepted,
                  rpgStasticTotal.questRewarded, rpgStasticTotal.questDropped);
         LOG_INFO("playerbots",
-                 "Bots total zone progression: started {}, arrived {}, replanned {}, terminal route failures {}",
-                 rpgStasticTotal.zoneTransitionsStarted, rpgStasticTotal.zoneArrivals,
-                 rpgStasticTotal.zoneReplans, rpgStasticTotal.zoneRouteFailures);
+                 "Bots total zone progression: started {} (bracket advancement {}), arrived {}, replanned {}, "
+                 "terminal route failures {}",
+                 rpgStasticTotal.zoneTransitionsStarted, rpgStasticTotal.zoneAdvancementsStarted,
+                 rpgStasticTotal.zoneArrivals, rpgStasticTotal.zoneReplans, rpgStasticTotal.zoneRouteFailures);
         LOG_INFO("playerbots", "Bots total player unstuck recoveries: nudges {}, hearthstones {}",
                  rpgStasticTotal.playerUnstuckNudges, rpgStasticTotal.playerUnstuckHearths);
         LOG_INFO("playerbots", "Bots total open water recoveries: swims {}, rescues {}", rpgStasticTotal.openWaterSwims,

@@ -111,6 +111,9 @@ struct NewRpgInfo
         WorldPosition lastMeaningfulPosition{};
         uint32 lastMeaningfulMovementAt{0};
         bool breadcrumb{false};
+        // Bracket maximum of the zone the bot grew out of. Non-zero marks the trip as level
+        // bracket advancement, which every destination must beat.
+        uint32 advancementBracketHigh{0};
     };
     struct Idle
     {
@@ -133,6 +136,9 @@ struct NewRpgInfo
     uint32 lastProgressCheckAt{0};
     uint32 lastProgressAt{0};
     uint32 migrationCooldownStartedAt{0};
+    // Kept apart from migrationCooldownStartedAt: a bot that has outgrown its bracket is
+    // usually still earning XP, and renewed progress must not make it retry every minute.
+    uint32 advancementAttemptedAt{0};
     bool progressInitialized{false};
 
     // Timestamp of the first tick the bot was found in water too deep to stand in, cleared as soon
@@ -165,9 +171,9 @@ struct NewRpgInfo
     void ChangeToWanderRandom();
     void ChangeToDoQuest(uint32 questId, const Quest* quest);
     void ChangeToTravelFlight(uint32 flightMasterEntry, WorldPosition flightMasterPos, std::vector<uint32> path);
-    void ChangeToTravelZone(WorldPosition destination, uint32 destinationZoneId, uint32 resumeQuestId,
-                            bool breadcrumb, std::vector<ZoneTravelStep> route = {}, float routeCost = 0.0f,
-                            std::vector<uint32> failedHubExclusions = {});
+    void ChangeToTravelZone(WorldPosition destination, uint32 destinationZoneId, uint32 resumeQuestId, bool breadcrumb,
+                            std::vector<ZoneTravelStep> route = {}, float routeCost = 0.0f,
+                            std::vector<uint32> failedHubExclusions = {}, uint32 advancementBracketHigh = 0);
     void ChangeToOutdoorPvp(ObjectGuid::LowType capturePointSpawnId = 0);
     void ChangeToRest();
     void ChangeToIdle();
@@ -186,6 +192,7 @@ struct NewRpgStatistic
     uint32 questRewarded{0};
     uint32 questDropped{0};
     uint32 zoneTransitionsStarted{0};
+    uint32 zoneAdvancementsStarted{0};
     uint32 zoneArrivals{0};
     uint32 zoneReplans{0};
     uint32 zoneRouteFailures{0};
@@ -202,6 +209,7 @@ struct NewRpgStatistic
         result.questRewarded = this->questRewarded + other.questRewarded;
         result.questDropped = this->questDropped + other.questDropped;
         result.zoneTransitionsStarted = this->zoneTransitionsStarted + other.zoneTransitionsStarted;
+        result.zoneAdvancementsStarted = this->zoneAdvancementsStarted + other.zoneAdvancementsStarted;
         result.zoneArrivals = this->zoneArrivals + other.zoneArrivals;
         result.zoneReplans = this->zoneReplans + other.zoneReplans;
         result.zoneRouteFailures = this->zoneRouteFailures + other.zoneRouteFailures;
@@ -219,6 +227,7 @@ struct NewRpgStatistic
         this->questRewarded += other.questRewarded;
         this->questDropped += other.questDropped;
         this->zoneTransitionsStarted += other.zoneTransitionsStarted;
+        this->zoneAdvancementsStarted += other.zoneAdvancementsStarted;
         this->zoneArrivals += other.zoneArrivals;
         this->zoneReplans += other.zoneReplans;
         this->zoneRouteFailures += other.zoneRouteFailures;

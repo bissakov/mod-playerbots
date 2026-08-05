@@ -896,6 +896,7 @@ public:
     const std::vector<WorldLocation> GetTeleportLocations(Player* bot);
     const std::vector<WorldLocation> GetTravelHubs(Player* bot);
     std::vector<ZoneHub> GetFactionCompatibleLevelHubs(Player const* bot) const;
+    static bool IsZoneFactionSafe(uint32 zoneId, TeamId team);
     bool GetZoneLevelBracket(uint32 zoneId, LevelBracket& bracket) const;
     std::vector<WorldLocation> GetCityLocations(Player* bot);
     std::vector<uint32> GetFlightNodesInZone(uint32 zoneId, TeamId team, uint32 excludeNode = 0) const;

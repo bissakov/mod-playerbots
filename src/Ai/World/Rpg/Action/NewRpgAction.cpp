@@ -193,11 +193,13 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
     // A breadcrumb migration is walking towards a quest objective in another zone, and
     // killing things on the way is the expected behaviour, not a reason to turn back.
     // Cancelling those meant almost every trip aborted within seconds of starting.
+    // An advancement migration is the same case: the bot is still earning XP in the zone
+    // it outgrew, so cancelling on progress would keep it there forever.
     bool cancellableTravel = false;
     if (status == RPG_TRAVEL_ZONE)
     {
         auto const& travelData = std::get<NewRpgInfo::TravelZone>(info.data);
-        cancellableTravel = !travelData.breadcrumb;
+        cancellableTravel = !travelData.breadcrumb && !travelData.advancementBracketHigh;
     }
 
     if (madeProgress && status == RPG_TRAVEL_ZONE && cancellableTravel)
@@ -233,6 +235,13 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
                          bot->GetMapId() == breadcrumbDestination.GetMapId()
                              ? bot->GetExactDist(breadcrumbDestination)
                              : -1.0f);
+            }
+            // A bot that has grown out of its zone bracket moves on the way a player does,
+            // without waiting for the no-progress fallback: it is still earning XP, just in a
+            // zone whose content it has outlevelled, so that fallback would never fire.
+            else if (StartZoneAdvancementTravel())
+            {
+                return true;
             }
             else
             {
@@ -804,9 +813,10 @@ bool NewRpgTravelZoneAction::Execute(Event /*event*/)
 
     // Same rule as NewRpgStatusUpdateAction: abandoning the trip on renewed progress only
     // makes sense for the no-progress fallback migration. A breadcrumb trip is heading for
-    // a quest objective, so earning XP on the way is the point, not a reason to stop.
+    // a quest objective, and an advancement trip is leaving a zone the bot has outgrown, so
+    // earning XP on the way is the point, not a reason to stop.
     bool progressChecked = false;
-    if (!data->breadcrumb && CheckProgress(progressChecked))
+    if (!data->breadcrumb && !data->advancementBracketHigh && CheckProgress(progressChecked))
     {
         LOG_INFO("playerbots", "[New RPG] {} cancelled zone travel after renewed XP or quest progress",
                  bot->GetName());
