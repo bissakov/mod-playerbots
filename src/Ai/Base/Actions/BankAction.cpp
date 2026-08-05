@@ -81,11 +81,17 @@ bool BankAction::Withdraw(uint32 itemid)
         return false;
     }
 
+    // Storing into an existing stack merges the counts and drops the source item,
+    // which deletes it outright while it is still unsaved, so keep what the
+    // message needs before handing the item over.
+    ItemTemplate const* proto = pItem->GetTemplate();
+    uint32 const count = pItem->GetCount();
+
     bot->RemoveItem(pItem->GetBagSlot(), pItem->GetSlot(), true);
     bot->StoreItem(dest, pItem, true);
 
     std::ostringstream out;
-    out << "got " << chat->FormatItem(pItem->GetTemplate(), pItem->GetCount()) << " from bank";
+    out << "got " << chat->FormatItem(proto, count) << " from bank";
     botAI->TellMaster(out.str());
     return true;
 }
@@ -102,10 +108,13 @@ bool BankAction::Deposit(Item* pItem)
         return false;
     }
 
+    ItemTemplate const* proto = pItem->GetTemplate();
+    uint32 const count = pItem->GetCount();
+
     bot->RemoveItem(pItem->GetBagSlot(), pItem->GetSlot(), true);
     bot->BankItem(dest, pItem, true);
 
-    out << "put " << chat->FormatItem(pItem->GetTemplate(), pItem->GetCount()) << " to bank";
+    out << "put " << chat->FormatItem(proto, count) << " to bank";
     botAI->TellMaster(out.str());
     return true;
 }
