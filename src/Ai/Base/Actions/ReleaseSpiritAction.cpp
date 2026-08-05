@@ -48,12 +48,20 @@ bool ReleaseSpiritAction::Execute(Event event)
 
     if (!sPlayerbotAIConfig.organicProgression)
         bot->DurabilityRepairAll(false, 1.0f, false);
-    LogRelease("released");
 
     WorldPacket releasePacket(CMSG_REPOP_REQUEST);
     releasePacket << uint8(0);
     bot->GetSession()->HandleRepopRequestOpcode(releasePacket);
 
+    // The handler drops a request it rejects without any reply, so read the ghost
+    // state back instead of assuming the release went through.
+    if (!bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        LogRelease("was refused spirit release");
+        return false;
+    }
+
+    LogRelease("released");
     return true;
 }
 

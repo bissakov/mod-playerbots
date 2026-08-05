@@ -223,6 +223,8 @@ private:
     NewRpgStatistic rpgStasticTotal;
     CachedEvent* FindEvent(uint32 bot, std::string const& event);
     uint32 GetEventValue(uint32 bot, std::string const& event);
+    // Seconds since the event was last written, 0 when it is not set.
+    uint32 GetEventAge(uint32 bot, std::string const& event);
     std::string GetEventData(uint32 bot, std::string const& event);
     uint32 SetEventValue(uint32 bot, std::string const& event, uint32 value, uint32 validIn,
                          std::string const& data = "");

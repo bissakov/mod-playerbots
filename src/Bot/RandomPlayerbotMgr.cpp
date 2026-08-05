@@ -59,6 +59,21 @@ struct GuidClassRaceInfo
     uint32 rRace;
 };
 
+namespace
+{
+// A body that has not released its spirit belongs to no recovery path: it has no
+// corpse to run back to, and not the ghost flag every Spirit Healer path is gated
+// on either. The core frees such a body after six minutes, but never inside an
+// instance and never while the bot is offline, so release it here once that
+// deadline has passed.
+constexpr uint32 SPIRIT_RELEASE_DEADLINE = 7 * MINUTE;
+
+// Death recovery only runs while the bot is in world, so a rotation logout is held
+// back until the bot is alive again. The wait is capped past the point where every
+// recovery path has given up, so a bot that cannot be recovered still rotates out.
+constexpr uint32 DEATH_RECOVERY_GRACE = 30 * MINUTE;
+}  // namespace
+
 void PrintStatsThread() { sRandomPlayerbotMgr.PrintStats(); }
 
 void activatePrintStatsThread()
@@ -1390,10 +1405,14 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
         // but re-arm the timer while waiting instead of leaving the bot without an "add" event: an
         // expired event makes every later branch of this function skip the bot, so it would hold its
         // slot forever, never rotate out and never be maintained again. A group of bots alone is no
-        // reason to wait; it is broken up by the logout itself.
-        if (player && (IsGroupedWithRealPlayer(player) || player->InBattleground() || player->InBattlegroundQueue() ||
-                       player->HasUnitState(UNIT_STATE_IN_FLIGHT) ||
-                       (player->IsInWorld() && player->GetMap() && player->GetMap()->IsDungeon())))
+        // reason to wait; it is broken up by the logout itself. A death is also worth waiting for: no
+        // recovery path runs while the bot is offline, so logging out here would park the bot dead in
+        // the offline pool. Wait only while its recovery can still make progress.
+        if (player &&
+            (IsGroupedWithRealPlayer(player) || player->InBattleground() || player->InBattlegroundQueue() ||
+             player->HasUnitState(UNIT_STATE_IN_FLIGHT) ||
+             (player->isDead() && GetEventValue(bot, "dead") && GetEventAge(bot, "dead") < DEATH_RECOVERY_GRACE) ||
+             (player->IsInWorld() && player->GetMap() && player->GetMap()->IsDungeon())))
         {
             SetEventValue(bot, "add", 1,
                           urand(sPlayerbotAIConfig.minRandomBotReviveTime, sPlayerbotAIConfig.maxRandomBotReviveTime));
@@ -1461,6 +1480,15 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
 
     if (!player->IsInWorld())
         return false;
+
+    // The dead event is a live-state flag. Maintain it here as well, because the
+    // bots the rest of this function skips would otherwise keep counting as dead
+    // for as long as the event stays valid.
+    if (!player->isDead() && GetEventValue(bot, "dead"))
+    {
+        SetEventValue(bot, "dead", 0, 0);
+        SetEventValue(bot, "revive", 0, 0);
+    }
 
     if (player->GetGroup() || player->HasUnitState(UNIT_STATE_IN_FLIGHT))
         return false;
@@ -1591,13 +1619,30 @@ bool RandomPlayerbotMgr::ProcessBot(Player* bot)
         // bypasses that entire player lifecycle.
         if (sPlayerbotAIConfig.organicProgression)
         {
+            Corpse* corpse = bot->GetCorpse();
+            bool const isGhost = bot->HasPlayerFlag(PLAYER_FLAGS_GHOST);
+
+            // A bot that has not released its spirit yet has neither a corpse nor
+            // the ghost flag, which excludes it from the corpse run and from the
+            // Spirit Healer fallback alike. Release it so it enters the ghost
+            // recovery path, which does terminate.
+            if (!corpse && !isGhost)
+            {
+                if (GetEventAge(botId, "dead") >= SPIRIT_RELEASE_DEADLINE &&
+                    botAI->DoSpecificAction("release", Event(), true))
+                    LOG_INFO("playerbots", "Bot {} {}:{} <{}> is released after staying dead without releasing",
+                             bot->GetGUID().ToString(), bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(),
+                             bot->GetName());
+
+                return false;
+            }
+
             // The dead strategy only drives a bot that still has a corpse to run
             // back to, so a ghost that lost its corpse needs the Spirit Healer
             // fallback right away rather than after the corpse-run timeout.
-            Corpse* corpse = bot->GetCorpse();
             bool const corpseRunTimedOut = corpse && time(nullptr) - corpse->GetGhostTime() >= 10 * MINUTE;
-            bool const lostCorpse = !corpse && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST);
-            if (botAI && (corpseRunTimedOut || lostCorpse))
+            bool const lostCorpse = !corpse;  // the bot is a ghost here
+            if (corpseRunTimedOut || lostCorpse)
                 botAI->DoSpecificAction("spirit healer", Event(), true);
             return false;
         }
@@ -2476,6 +2521,16 @@ uint32 RandomPlayerbotMgr::GetEventValue(uint32 bot, std::string const& event)
         return e->value;
 
     return 0;
+}
+
+uint32 RandomPlayerbotMgr::GetEventAge(uint32 bot, std::string const& event)
+{
+    CachedEvent* e = FindEvent(bot, event);
+    if (!e || !e->lastChangeTime)
+        return 0;
+
+    uint32 const now = NowSeconds();
+    return now > e->lastChangeTime ? now - e->lastChangeTime : 0;
 }
 
 std::string RandomPlayerbotMgr::GetEventData(uint32 bot, std::string const& event)
