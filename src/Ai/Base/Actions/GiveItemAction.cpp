@@ -39,12 +39,18 @@ bool GiveItemAction::Execute(Event /*event*/)
         InventoryResult msg = receiver->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false);
         if (msg == EQUIP_ERR_OK)
         {
+            // The receiver merges the stack into one it already holds when it can,
+            // and that deletes the item handed over, so keep what the message
+            // needs while the pointer is still good.
+            ItemTemplate const* proto = item->GetTemplate();
+            uint32 const count = item->GetCount();
+
             bot->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
             item->SetOwnerGUID(target->GetGUID());
             receiver->MoveItemToInventory(dest, item, true);
 
             std::ostringstream out;
-            out << "Got " << chat->FormatItem(item->GetTemplate(), item->GetCount()) << " from " << bot->GetName();
+            out << "Got " << chat->FormatItem(proto, count) << " from " << bot->GetName();
             receiverAi->TellMasterNoFacing(out.str());
         }
         else
