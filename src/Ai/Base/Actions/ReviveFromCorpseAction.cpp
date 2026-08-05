@@ -12,6 +12,7 @@
 #include "Event.h"
 #include "FleeManager.h"
 #include "GameGraveyard.h"
+#include "GameTime.h"
 #include "MapMgr.h"
 #include "ObjectDefines.h"
 #include "PlayerbotTextMgr.h"
@@ -50,9 +51,12 @@ bool ReviveFromCorpseAction::Execute(Event event)
     if (!corpse)
         return false;
 
-    // if (corpse->GetGhostTime() + bot->GetCorpseReclaimDelay(corpse->GetType() == CORPSE_RESURRECTABLE_PVP) >
-    // time(nullptr))
-    //     return false;
+    // The reclaim opcode is dropped without any reply until the reclaim delay has
+    // passed, so attempting it earlier only interrupts the corpse run. Use the same
+    // clock as the handler so both agree on when the delay is over.
+    if (time_t(corpse->GetGhostTime() + bot->GetCorpseReclaimDelay(corpse->GetType() == CORPSE_RESURRECTABLE_PVP)) >
+        time_t(GameTime::GetGameTime().count()))
+        return false;
 
     if (groupLeader)
     {
@@ -72,15 +76,24 @@ bool ReviveFromCorpseAction::Execute(Event event)
         }
     }
 
-    LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> revives at body", bot->GetGUID().ToString().c_str(),
-              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
-
-    bot->GetMotionMaster()->Clear();
-    bot->StopMoving();
-
     WorldPacket packet(CMSG_RECLAIM_CORPSE);
     packet << bot->GetGUID();
     bot->GetSession()->HandleReclaimCorpseOpcode(packet);
+
+    // The handler also drops a rejected request silently, so read the resurrection
+    // state back instead of assuming the reclaim went through.
+    if (!bot->IsAlive() || bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> was refused corpse reclaim", bot->GetGUID().ToString(),
+                  bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
+        return false;
+    }
+
+    LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> revives at body", bot->GetGUID().ToString(),
+              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
+
+    bot->GetMotionMaster()->Clear();
+    bot->StopMoving();
 
     return true;
 }
