@@ -303,8 +303,14 @@ ItemUsage ItemUsageValue::QueryItemUsageForEquip(ItemTemplate const* itemProto, 
         if (oldItem)
         {
             // uint32 oldStatWeight = sRandomItemMgr.GetLiveStatWeight(bot, oldItemProto->ItemId);
+            // The upgrade threshold exists to stop bots churning on marginal side-grades. Moving up in
+            // quality is not a side-grade, so it only has to score better. Without this a white can never
+            // displace a grey of the same item level: the quality step is 1.1x and so is the threshold.
+            float const upgradeThreshold = itemProto->Quality > oldItemProto->Quality
+                                               ? 1.0f
+                                               : sPlayerbotAIConfig.equipUpgradeThreshold;
             if (itemScore || oldScore)
-                shouldEquipInSlot = itemScore > oldScore * sPlayerbotAIConfig.equipUpgradeThreshold;
+                shouldEquipInSlot = itemScore > oldScore * upgradeThreshold;
         }
 
         // Bigger quiver

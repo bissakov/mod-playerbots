@@ -124,10 +124,13 @@ float StatsWeightCalculator::CalculateItem(uint32 itemId, int32 randomPropertyId
         // Heirloom items scale with player level
         // Use player level as effective item level for heirlooms - Quality EPIC
         // Else - Blend with item quality and level for normal items
-        if (proto->Quality == ITEM_QUALITY_HEIRLOOM)
-            weight_ *= PlayerbotFactory::CalcMixedGearScore(lvl, ITEM_QUALITY_EPIC);
-        else
-            weight_ *= PlayerbotFactory::CalcMixedGearScore(proto->ItemLevel, proto->Quality);
+        bool const heirloom = proto->Quality == ITEM_QUALITY_HEIRLOOM;
+        uint32 const blendLevel = heirloom ? lvl : proto->ItemLevel;
+        ItemQualities const blendQuality = heirloom ? ITEM_QUALITY_EPIC : ItemQualities(proto->Quality);
+        // Blend in floating point. CalcMixedGearScore truncates to uint32, which wipes out the quality
+        // step at low item levels: at ilvl 4 poor, normal and uncommon all truncate to 4, so a grey
+        // could only ever be beaten on raw stats.
+        weight_ *= blendLevel * PlayerbotAI::GetItemScoreMultiplier(blendQuality);
     }
 
     // Apply weapon speed governance if slot is provided and this is a weapon
